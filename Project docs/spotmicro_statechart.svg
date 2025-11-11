@@ -1,0 +1,323 @@
+<svg viewBox="0 0 1600 1400" xmlns="http://www.w3.org/2000/svg">
+  <!-- Define styles -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#333" />
+    </marker>
+    <marker id="arrowhead-red" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#cc0000" />
+    </marker>
+    <marker id="arrowhead-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#00aa00" />
+    </marker>
+    <style>
+      .state { fill: #f0f8ff; stroke: #333; stroke-width: 2; rx: 15; }
+      .superstate { fill: #e6f3ff; stroke: #0066cc; stroke-width: 3; rx: 20; }
+      .region { fill: #f5f5f5; stroke: #666; stroke-width: 2; rx: 15; }
+      .initial { fill: #000; }
+      .history { fill: #fff; stroke: #333; stroke-width: 2; }
+      .text { font-family: Arial, sans-serif; font-size: 14px; fill: #333; }
+      .title { font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; fill: #0066cc; }
+      .label { font-family: Arial, sans-serif; font-size: 12px; fill: #333; }
+      .small { font-family: Arial, sans-serif; font-size: 11px; fill: #333; }
+      .transition { stroke: #333; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+      .broadcast-red { stroke: #cc0000; stroke-width: 3; fill: none; marker-end: url(#arrowhead-red); }
+      .broadcast-green { stroke: #00aa00; stroke-width: 3; fill: none; marker-end: url(#arrowhead-green); }
+      .dashed { stroke-dasharray: 8,5; stroke: #666; stroke-width: 3; }
+      .note { font-family: Arial, sans-serif; font-size: 12px; font-weight: bold; }
+      .concept { font-family: Arial, sans-serif; font-size: 11px; fill: #0066cc; font-style: italic; }
+    </style>
+  </defs>
+
+  <!-- Main Title -->
+  <text x="800" y="30" class="title" text-anchor="middle" font-size="22">SpotMicro Robot System - Statechart Model</text>
+  <text x="800" y="50" class="label" text-anchor="middle" font-size="12">(CSEN701 - Embedded Systems - State Modeling)</text>
+  
+  <!-- Root Superstate: Robot_System -->
+  <rect x="20" y="70" width="1560" height="1310" class="superstate" stroke-width="4"/>
+  <text x="40" y="100" class="title" font-size="18">Robot_System</text>
+  
+  <!-- Initial State -->
+  <circle cx="90" cy="130" r="10" class="initial"/>
+  
+  <!-- POWERED_OFF State -->
+  <rect x="40" y="150" width="200" height="100" class="state"/>
+  <text x="140" y="180" class="text" text-anchor="middle" font-weight="bold">POWERED_OFF</text>
+  <line x1="40" y1="190" x2="240" y2="190" stroke="#333" stroke-width="1"/>
+  <text x="50" y="210" class="small">entry/</text>
+  <text x="60" y="225" class="small">All_Systems_Off()</text>
+  <text x="60" y="240" class="small">OLED: "SHUTDOWN"</text>
+  
+  <line x1="90" y1="140" x2="90" y2="150" class="transition"/>
+  
+  <!-- POWERED_ON Superstate (HIERARCHY Level 1) -->
+  <rect x="280" y="120" width="1280" height="1230" class="superstate"/>
+  <text x="300" y="150" class="title">POWERED_ON (H*)</text>
+  <text x="1400" y="150" class="concept">&lt;&lt;HIERARCHY L1&gt;&gt;</text>
+  
+  <!-- Deep History Marker -->
+  <circle cx="340" cy="180" r="18" class="history"/>
+  <text x="340" y="188" text-anchor="middle" font-weight="bold" font-size="16">H*</text>
+  
+  <!-- Transition: POWERED_OFF -> POWERED_ON -->
+  <path d="M 240 200 L 280 200" class="transition"/>
+  <text x="245" y="190" class="label">[Rocker_Switch = ON]</text>
+  
+  <!-- Transition: POWERED_ON -> POWERED_OFF -->
+  <path d="M 280 230 L 240 230" class="transition"/>
+  <text x="245" y="250" class="label">[Rocker_Switch = OFF]</text>
+  
+  <!-- Initial for POWERED_ON -->
+  <circle cx="380" cy="220" r="8" class="initial"/>
+  
+  <!-- Sequential States: Booting -->
+  <rect x="430" y="180" width="180" height="90" class="state"/>
+  <text x="520" y="210" class="text" text-anchor="middle" font-weight="bold">Booting</text>
+  <line x1="430" y1="220" x2="610" y2="220" stroke="#333" stroke-width="1"/>
+  <text x="440" y="240" class="small">entry/</text>
+  <text x="450" y="255" class="small">OLED.display("BOOTING...")</text>
+  
+  <line x1="388" y1="220" x2="430" y2="220" class="transition"/>
+  
+  <!-- Sequential States: Calibrating_IMU -->
+  <rect x="650" y="180" width="200" height="90" class="state"/>
+  <text x="750" y="210" class="text" text-anchor="middle" font-weight="bold">Calibrating_IMU</text>
+  <line x1="650" y1="220" x2="850" y2="220" stroke="#333" stroke-width="1"/>
+  <text x="660" y="240" class="small">entry/ OLED.display("CAL...")</text>
+  <text x="660" y="255" class="small">do/ calibrate_imu()</text>
+  
+  <path d="M 610 225 L 650 225" class="transition"/>
+  <text x="615" y="215" class="small">after(2s)</text>
+  
+  <!-- OPERATIONAL Superstate (ORTHOGONALITY Level 1) -->
+  <rect x="300" y="300" width="1240" height="1020" class="superstate"/>
+  <text x="320" y="330" class="title">OPERATIONAL</text>
+  <text x="1350" y="330" class="concept">&lt;&lt;ORTHOGONALITY L1&gt;&gt;</text>
+  
+  <path d="M 750 270 L 750 300" class="transition"/>
+  <text x="755" y="285" class="small">after(3s)</text>
+  
+  <!-- ============ REGION 1: Motion_Control (Subsystem 1) ============ -->
+  <rect x="320" y="350" width="1200" height="280" class="region"/>
+  <text x="340" y="380" class="title">Region 1: Motion_Control (Subsystem 1 - Sequential)</text>
+  <text x="340" y="400" class="small" font-style="italic">do/ continuous_balance_loop() // Runs continuously</text>
+  
+  <!-- Initial for Motion_Control -->
+  <circle cx="380" cy="425" r="7" class="initial"/>
+  
+  <!-- IDLE State -->
+  <rect x="430" y="420" width="160" height="100" class="state"/>
+  <text x="510" y="450" class="text" text-anchor="middle" font-weight="bold">IDLE</text>
+  <line x1="430" y1="460" x2="590" y2="460" stroke="#333" stroke-width="1"/>
+  <text x="440" y="478" class="small">entry/</text>
+  <text x="450" y="493" class="small">set_stand_pose()</text>
+  <text x="450" y="508" class="small">OLED: "STATUS: IDLE"</text>
+  
+  <line x1="387" y1="425" x2="430" y2="425" class="transition"/>
+  
+  <!-- WALKING_FWD State -->
+  <rect x="630" y="420" width="160" height="100" class="state"/>
+  <text x="710" y="450" class="text" text-anchor="middle" font-weight="bold">WALKING_FWD</text>
+  <line x1="630" y1="460" x2="790" y2="460" stroke="#333" stroke-width="1"/>
+  <text x="640" y="478" class="small">entry/</text>
+  <text x="650" y="493" class="small">execute_gait(FWD)</text>
+  
+  <path d="M 590 450 L 630 450" class="transition"/>
+  <text x="595" y="440" class="small">[WALK_FWD]</text>
+  
+  <path d="M 630 490 L 590 490" class="transition"/>
+  <text x="595" y="510" class="small">[STOP]</text>
+  
+  <!-- TURNING State -->
+  <rect x="830" y="420" width="160" height="100" class="state"/>
+  <text x="910" y="450" class="text" text-anchor="middle" font-weight="bold">TURNING</text>
+  <line x1="830" y1="460" x2="990" y2="460" stroke="#333" stroke-width="1"/>
+  <text x="840" y="478" class="small">entry/ angle := X</text>
+  <text x="840" y="493" class="small">do/ execute_turn(X)</text>
+  
+  <path d="M 790 440 L 830 440" class="transition"/>
+  <text x="795" y="430" class="small">[TURN_LEFT_X]</text>
+  
+  <path d="M 830 480 L 790 480" class="transition"/>
+  <text x="795" y="500" class="small">[turn_complete]</text>
+  
+  <!-- STOPPING (Emergency) State -->
+  <rect x="1030" y="420" width="180" height="100" class="state"/>
+  <text x="1120" y="450" class="text" text-anchor="middle" font-weight="bold">STOPPING</text>
+  <line x1="1030" y1="460" x2="1210" y2="460" stroke="#333" stroke-width="1"/>
+  <text x="1040" y="478" class="small">entry/</text>
+  <text x="1050" y="493" class="small">execute_emergency_stop()</text>
+  <text x="1050" y="508" class="small">OLED: "E-STOP!"</text>
+  
+  <path d="M 990 450 L 1030 450" class="transition"/>
+  <text x="995" y="440" class="small">[EMERGENCY_STOP]</text>
+  
+  <!-- WALKING_BWD State -->
+  <rect x="1250" y="420" width="160" height="100" class="state"/>
+  <text x="1330" y="450" class="text" text-anchor="middle" font-weight="bold">WALKING_BWD</text>
+  <line x1="1250" y1="460" x2="1410" y2="460" stroke="#333" stroke-width="1"/>
+  <text x="1260" y="478" class="small">entry/</text>
+  <text x="1270" y="493" class="small">execute_gait(BWD)</text>
+  
+  <path d="M 590 530 Q 920 570 1250 500" class="transition"/>
+  <text x="900" y="590" class="small">[WALK_BWD]</text>
+  
+  <!-- Dashed line separator (ORTHOGONALITY) -->
+  <line x1="320" y1="650" x2="1520" y2="650" class="dashed"/>
+  <text x="900" y="670" class="note" fill="#666" text-anchor="middle">⊥ ORTHOGONAL REGIONS (Concurrent Execution) ⊥</text>
+  
+  <!-- ============ REGION 2: Mode_Manager (Subsystems 2 & 3) ============ -->
+  <rect x="320" y="690" width="1200" height="610" class="region"/>
+  <text x="340" y="720" class="title">Region 2: Mode_Manager (Subsystems 2 &amp; 3 - Parallel)</text>
+  <text x="1250" y="720" class="concept">&lt;&lt;ORTHOGONALITY L2&gt;&gt;</text>
+  
+  <!-- ======== REGION 2a: Remote_Listener (Subsystem 3) ======== -->
+  <rect x="340" y="740" width="560" height="270" class="region" fill="#fff5e6"/>
+  <text x="360" y="765" class="title" font-size="14">Region 2a: Remote_Listener (Sub 3)</text>
+  
+  <!-- Initial for Remote_Listener -->
+  <circle cx="400" cy="790" r="6" class="initial"/>
+  
+  <!-- MQTT_Connecting State -->
+  <rect x="440" y="780" width="160" height="80" class="state"/>
+  <text x="520" y="810" class="text" text-anchor="middle" font-weight="bold">MQTT_Connecting</text>
+  <line x1="440" y1="820" x2="600" y2="820" stroke="#333" stroke-width="1"/>
+  <text x="450" y="838" class="small">entry/</text>
+  <text x="460" y="853" class="small">connect_wifi()</text>
+  
+  <line x1="406" y1="790" x2="440" y2="790" class="transition"/>
+  
+  <!-- MQTT_Listening State -->
+  <rect x="640" y="760" width="240" height="230" class="state"/>
+  <text x="760" y="790" class="text" text-anchor="middle" font-weight="bold">MQTT_Listening</text>
+  <line x1="640" y1="800" x2="880" y2="800" stroke="#333" stroke-width="1"/>
+  <text x="650" y="818" class="small">entry/ OLED: "MQTT OK"</text>
+  <text x="650" y="833" class="small">do/ listen_for_commands()</text>
+  <line x1="640" y1="843" x2="880" y2="843" stroke="#333" stroke-width="1"/>
+  <text x="650" y="858" class="small" font-weight="bold">Internal Reactions:</text>
+  <text x="650" y="873" class="small">when(msg=="PATROL")/</text>
+  <text x="660" y="888" class="small">  send_event(PATROL)</text>
+  <text x="650" y="903" class="small">when(msg=="STOP")/</text>
+  <text x="660" y="918" class="small">  send_event(STOP)</text>
+  <text x="650" y="933" class="small">when(msg=="WALK_FWD")/</text>
+  <text x="660" y="948" class="small">  send_event(WALK_FWD)</text>
+  <text x="650" y="963" class="small">when(msg=="TURN_LEFT_X")/</text>
+  <text x="660" y="978" class="small">  send_event(TURN_LEFT_X)</text>
+  
+  <path d="M 600 820 L 640 820" class="transition"/>
+  <text x="605" y="810" class="small">[WIFI_OK]</text>
+  
+  <path d="M 640 850 L 600 850" class="transition"/>
+  <text x="605" y="870" class="small">[WiFi_Lost]</text>
+  
+  <!-- Broadcasting arrow from MQTT -->
+  <path d="M 760 760 L 760 690" class="broadcast-green"/>
+  <text x="765" y="730" class="note" fill="#00aa00">BROADCAST</text>
+  <text x="765" y="745" class="small" fill="#00aa00">Events to all regions</text>
+  
+  <!-- Nested Dashed line separator -->
+  <line x1="340" y1="1030" x2="1520" y2="1030" class="dashed"/>
+  
+  <!-- ======== REGION 2b: Autonomous_Nav (Subsystem 2) ======== -->
+  <rect x="340" y="1050" width="1160" height="240" class="region" fill="#e6ffe6"/>
+  <text x="360" y="1075" class="title" font-size="14">Region 2b: Autonomous_Nav (Sub 2)</text>
+  
+  <!-- Initial for Autonomous_Nav -->
+  <circle cx="400" cy="1100" r="6" class="initial"/>
+  
+  <!-- Nav_Idle State -->
+  <rect x="440" y="1085" width="120" height="70" class="state"/>
+  <text x="500" y="1115" class="text" text-anchor="middle" font-weight="bold">Nav_Idle</text>
+  <line x1="440" y1="1125" x2="560" y2="1125" stroke="#333" stroke-width="1"/>
+  <text x="450" y="1143" class="small">entry/</text>
+  <text x="455" y="1155" class="small" font-size="9">sensors_off()</text>
+  
+  <line x1="406" y1="1100" x2="440" y2="1100" class="transition"/>
+  
+  <!-- Patrolling Superstate (HIERARCHY Level 2) -->
+  <rect x="600" y="1080" width="880" height="200" class="superstate" stroke="#0066cc"/>
+  <text x="620" y="1105" class="title" font-size="14">Patrolling (H)</text>
+  <text x="1360" y="1105" class="concept" font-size="10">&lt;&lt;HIERARCHY L2&gt;&gt;</text>
+  
+  <!-- Shallow History -->
+  <circle cx="660" cy="1130" r="14" class="history"/>
+  <text x="660" y="1137" text-anchor="middle" font-weight="bold">H</text>
+  
+  <path d="M 560 1110 L 600 1110" class="transition"/>
+  <text x="565" y="1100" class="small">[PATROL]</text>
+  
+  <path d="M 600 1140 L 560 1140" class="transition"/>
+  <text x="565" y="1160" class="small">[STOP]</text>
+  
+  <!-- Initial for Patrolling -->
+  <circle cx="720" cy="1130" r="5" class="initial"/>
+  
+  <!-- Default_Walk State -->
+  <rect x="755" y="1115" width="200" height="130" class="state"/>
+  <text x="855" y="1140" class="text" text-anchor="middle" font-weight="bold">Default_Walk</text>
+  <line x1="755" y1="1150" x2="955" y2="1150" stroke="#333" stroke-width="1"/>
+  <text x="765" y="1168" class="small">entry/ send_event(WALK_FWD)</text>
+  <text x="765" y="1183" class="small">do/</text>
+  <text x="775" y="1198" class="small">sense_ultrasonic()</text>
+  <text x="775" y="1213" class="small">sense_stereo_cameras()</text>
+  <text x="775" y="1228" class="small">check_imu()</text>
+  
+  <line x1="725" y1="1130" x2="755" y2="1130" class="transition"/>
+  
+  <!-- Avoiding_Wall State -->
+  <rect x="990" y="1115" width="200" height="85" class="state"/>
+  <text x="1090" y="1140" class="text" text-anchor="middle" font-weight="bold">Avoiding_Wall</text>
+  <line x1="990" y1="1150" x2="1190" y2="1150" stroke="#333" stroke-width="1"/>
+  <text x="1000" y="1168" class="small">entry/</text>
+  <text x="1010" y="1183" class="small">OLED: "AVOIDING"</text>
+  <text x="1010" y="1198" class="small">send_event(STOP)</text>
+  
+  <path d="M 955 1150 L 990 1150" class="transition"/>
+  <text x="960" y="1140" class="small">[HC_SR04 &lt; 20cm]</text>
+  
+  <path d="M 990 1180 L 955 1180" class="transition"/>
+  <text x="960" y="1200" class="small">[IMU_turn_complete]</text>
+  
+  <!-- Broadcasting from Avoiding_Wall -->
+  <path d="M 1090 1115 L 1090 1050" class="broadcast-red"/>
+  <text x="1095" y="1085" class="note" fill="#cc0000">send_event</text>
+  <text x="1095" y="1100" class="small" fill="#cc0000">(TURN_LEFT_90)</text>
+  
+  <!-- Avoiding_Drop State -->
+  <rect x="1230" y="1115" width="230" height="90" class="state"/>
+  <text x="1345" y="1140" class="text" text-anchor="middle" font-weight="bold">Avoiding_Drop</text>
+  <line x1="1230" y1="1150" x2="1460" y2="1150" stroke="#333" stroke-width="1"/>
+  <text x="1240" y="1168" class="small">entry/ OLED: "DANGER: DROP!"</text>
+  <text x="1240" y="1183" class="small">send_event(EMERGENCY_STOP)</text>
+  <text x="1240" y="1198" class="small">send_event(TURN_180)</text>
+  
+  <path d="M 955 1170 L 1230 1170" class="transition"/>
+  <text x="1070" y="1160" class="small">[Stereo_DropOff_Detected]</text>
+  
+  <path d="M 1230 1190 L 955 1190" class="transition"/>
+  <text x="1070" y="1210" class="small">[IMU_turn_complete]</text>
+  
+  <!-- Broadcasting from Avoiding_Drop -->
+  <path d="M 1345 1115 L 1345 1050" class="broadcast-red"/>
+  <text x="1350" y="1085" class="note" fill="#cc0000">BROADCAST</text>
+  <text x="1350" y="1100" class="small" fill="#cc0000">(High Priority!)</text>
+  
+  <!-- Legend -->
+  <rect x="50" y="1150" width="220" height="210" class="state" fill="#fffacd"/>
+  <text x="160" y="1175" class="title" text-anchor="middle" font-size="14">Concepts Used</text>
+  <line x1="50" y1="1182" x2="270" y2="1182" stroke="#333" stroke-width="2"/>
+  
+  <text x="60" y="1200" class="small" font-weight="bold">✓ HIERARCHY:</text>
+  <text x="65" y="1215" class="small" font-size="10">• POWERED_ON contains</text>
+  <text x="70" y="1228" class="small" font-size="10">Boot→Calib→OPERATIONAL</text>
+  <text x="65" y="1241" class="small" font-size="10">• Patrolling has substates</text>
+  
+  <text x="60" y="1260" class="small" font-weight="bold">✓ ORTHOGONALITY:</text>
+  <text x="65" y="1275" class="small" font-size="10">• 3 concurrent regions</text>
+  <text x="65" y="1288" class="small" font-size="10">• Dashed lines separate them</text>
+  
+  <text x="60" y="1307" class="small" font-weight="bold">✓ BROADCASTING:</text>
+  <text x="65" y="1322" class="small" font-size="10">• Events sent to all regions</text>
+  <text x="65" y="1335" class="small" font-size="10">• Red = Nav→Motion</text>
+  <text x="65" y="1348" class="small" font-size="10">• Green = MQTT→All</text>
+</svg>
