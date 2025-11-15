@@ -77,3 +77,111 @@ target_link_libraries(spotmicro-rp2040
 
 pico_add_extra_outputs(spotmicro-rp2040)
 
+# ============================================================================
+# Servo Driver Test Executable (PCA9685)
+# ============================================================================
+
+add_executable(test_servo
+    test_servo.cpp
+    pca9685.cpp
+)
+
+pico_set_program_name(test_servo "test_servo")
+pico_set_program_version(test_servo "0.1")
+
+pico_enable_stdio_uart(test_servo 0)
+pico_enable_stdio_usb(test_servo 1)
+
+target_include_directories(test_servo PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+)
+
+target_link_libraries(test_servo
+    pico_stdlib
+    hardware_i2c
+    hardware_gpio
+)
+
+pico_add_extra_outputs(test_servo)
+
+# ============================================================================
+# Servo Debug/Diagnostic Tool
+# ============================================================================
+
+add_executable(test_servo_debug
+    test_servo_debug.cpp
+    pca9685.cpp
+)
+
+pico_set_program_name(test_servo_debug "test_servo_debug")
+pico_set_program_version(test_servo_debug "0.1")
+
+pico_enable_stdio_uart(test_servo_debug 0)
+pico_enable_stdio_usb(test_servo_debug 1)
+
+target_include_directories(test_servo_debug PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+)
+
+target_link_libraries(test_servo_debug
+    pico_stdlib
+    hardware_i2c
+    hardware_gpio
+)
+
+pico_add_extra_outputs(test_servo_debug)
+
+# ============================================================================
+# 12 Servo Test for SpotMicro
+# ============================================================================
+
+add_executable(test_12_servos
+    test_12_servos.cpp
+    pca9685.cpp
+)
+
+pico_set_program_name(test_12_servos "test_12_servos")
+pico_set_program_version(test_12_servos "0.1")
+
+pico_enable_stdio_uart(test_12_servos 0)
+pico_enable_stdio_usb(test_12_servos 1)
+
+target_include_directories(test_12_servos PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+)
+
+target_link_libraries(test_12_servos
+    pico_stdlib
+    hardware_i2c
+    hardware_gpio
+)
+
+pico_add_extra_outputs(test_12_servos)
+
+# ============================================================================
+# LCD 16x2 I2C Display Test
+# ============================================================================
+
+add_executable(test_lcd
+    test_lcd.cpp
+    lcd_16x2.cpp
+)
+
+pico_set_program_name(test_lcd "test_lcd")
+pico_set_program_version(test_lcd "0.1")
+
+pico_enable_stdio_uart(test_lcd 0)
+pico_enable_stdio_usb(test_lcd 1)
+
+target_include_directories(test_lcd PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+)
+
+target_link_libraries(test_lcd
+    pico_stdlib
+    hardware_i2c
+    hardware_gpio
+)
+
+pico_add_extra_outputs(test_lcd)
+
