@@ -185,3 +185,56 @@ target_link_libraries(test_lcd
 
 pico_add_extra_outputs(test_lcd)
 
+# ============================================================================
+# HC-SR04 Ultrasonic Sensor Test
+# ============================================================================
+
+add_executable(test_hc_sr04
+    test_hc_sr04.cpp
+    hc_sr04.cpp
+)
+
+pico_set_program_name(test_hc_sr04 "test_hc_sr04")
+pico_set_program_version(test_hc_sr04 "0.1")
+
+pico_enable_stdio_uart(test_hc_sr04 0)
+pico_enable_stdio_usb(test_hc_sr04 1)
+
+target_include_directories(test_hc_sr04 PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+)
+
+target_link_libraries(test_hc_sr04
+    pico_stdlib
+    hardware_gpio
+    hardware_timer
+    m
+)
+
+pico_add_extra_outputs(test_hc_sr04)
+
+# ============================================================================
+# HC-SR04 GPIO Level Debugger
+# ============================================================================
+
+add_executable(test_hc_sr04_debug
+    test_hc_sr04_debug.cpp
+)
+
+pico_set_program_name(test_hc_sr04_debug "test_hc_sr04_debug")
+pico_set_program_version(test_hc_sr04_debug "0.1")
+
+pico_enable_stdio_uart(test_hc_sr04_debug 0)
+pico_enable_stdio_usb(test_hc_sr04_debug 1)
+
+target_include_directories(test_hc_sr04_debug PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+)
+
+target_link_libraries(test_hc_sr04_debug
+    pico_stdlib
+    hardware_gpio
+)
+
+pico_add_extra_outputs(test_hc_sr04_debug)
+
