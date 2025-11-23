@@ -1,37 +1,53 @@
 #include <Arduino.h>
-#include "LSM6DSOX_Driver.h"
+#include <Arduino_LSM6DSOX.h>
 
-LSM6DSOX_Driver imu;
+float Ax, Ay, Az;
+float Gx, Gy, Gz;
 
 void setup() {
-    Serial.begin(115200);
-    while (!Serial);
-    
-    Serial.println("Initializing LSM6DSOX IMU...");
-    
-    if (!imu.begin()) {
-        Serial.println("Failed to initialize IMU!");
-        while (1);
-    }
-    
-    Serial.println("IMU initialized successfully!");
-    imu.calibrateAccelerometer();
+  Serial.begin(9600);
+  while(!Serial);
+
+  if (!IMU.begin()) {
+    Serial.println("Failed to initialize IMU!");
+    while (1);
+  }
+
+  Serial.print("Accelerometer sample rate = ");
+  Serial.print(IMU.accelerationSampleRate());
+  Serial.println(" Hz");
+  Serial.println();
+
+  Serial.print("Gyroscope sample rate = ");  
+  Serial.print(IMU.gyroscopeSampleRate());
+  Serial.println(" Hz");
+  Serial.println();
 }
 
 void loop() {
-    LSM6DSOX_Driver::SensorData data;
+  if (IMU.accelerationAvailable()) {
+    IMU.readAcceleration(Ax, Ay, Az);
+
+    Serial.println("Accelerometer data: ");
+    Serial.print(Ax);
+    Serial.print('\t');
+    Serial.print(Ay);
+    Serial.print('\t');
+    Serial.println(Az);
+    Serial.println();
+  }
+
+  if (IMU.gyroscopeAvailable()) {
+    IMU.readGyroscope(Gx, Gy, Gz);
     
-    if (imu.readSensorData(data)) {
-        Serial.print("Accel: ");
-        Serial.print(data.accelX); Serial.print(", ");
-        Serial.print(data.accelY); Serial.print(", ");
-        Serial.print(data.accelZ); Serial.println(" mg");
-        
-        Serial.print("Gyro: ");
-        Serial.print(data.gyroX); Serial.print(", ");
-        Serial.print(data.gyroY); Serial.print(", ");
-        Serial.print(data.gyroZ); Serial.println(" dps");
-    }
-    
-    delay(100);
+    Serial.println("Gyroscope data: ");
+    Serial.print(Gx);
+    Serial.print('\t');
+    Serial.print(Gy);
+    Serial.print('\t');
+    Serial.println(Gz);
+    Serial.println();
+  }
+
+  delay(500);
 }
