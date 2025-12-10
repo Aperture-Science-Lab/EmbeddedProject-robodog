@@ -1,5 +1,5 @@
 /**
- * @file main.cpp
+ * @file nano_imu.ino
  * @brief Smart IMU Sensor Hub for SpotMicro
  * 
  * Arduino Nano RP2040 Connect acts as a smart sensor hub:
@@ -10,8 +10,8 @@
  * 
  * Communication Protocol:
  * - UART: 115200 baud, 8N1
- * - Pico GP16 -> Nano TX (GPIO0/Pin 16)
- * - Pico GP17 <- Nano RX (GPIO1/Pin 17)
+ * - Pico GP16 -> Nano TX (GPIO0/Pin 16) [receives Nano TX]
+ * - Pico GP17 <- Nano RX (GPIO1/Pin 17) [transmits to Nano RX]
  * 
  * Commands (from Pico):
  *   STATUS_REQUEST  - Request full sensor status
@@ -25,11 +25,10 @@
  * Wiring:
  *   Nano Pin 15 (VIN) <- 5V from LM2596S
  *   Nano Pin 14 (GND) <- Common GND
- *   Nano Pin 16 (TX)  -> Pico GP16
- *   Nano Pin 17 (RX)  <- Pico GP17
+ *   Nano Pin 16 (TX)  -> Pico GP16 (receives this)
+ *   Nano Pin 17 (RX)  <- Pico GP17 (transmits to this)
  */
 
-#include <Arduino.h>
 #include <Arduino_LSM6DSOX.h>
 #include <math.h>
 
@@ -42,6 +41,7 @@
 #define FILTER_ALPHA    0.98f     // Complementary filter constant
 
 // LED for status indication
+#define LED_BUILTIN     13
 
 // ============================================================================
 // Global Variables
@@ -77,7 +77,7 @@ bool send_continuous = false;  // If true, send IMU data continuously
 
 // Command buffer
 char cmd_buffer[64];
-size_t cmd_index = 0;
+int cmd_index = 0;
 
 // ============================================================================
 // Function Prototypes
@@ -102,8 +102,11 @@ void setup() {
     Serial.begin(SERIAL_BAUD);
     
     // Initialize Serial1 (UART to Pico W)
-    // Serial1 uses hardware RX/TX pins: GPIO101 (RX), GPIO108 (TX) by default
+    // TX = GPIO0 (Pin 16), RX = GPIO1 (Pin 17)
     Serial1.begin(SERIAL_BAUD);
+    
+    // Configure Serial1 for 8N1 format (8 data bits, no parity, 1 stop bit)
+    Serial1.setPollingMode(true);
     
     // Wait a moment for serial
     delay(1000);
@@ -147,14 +150,11 @@ void setup() {
     Serial.println("Calibration complete!");
     Serial1.println("INFO,READY");
     
-    // Enable continuous streaming by default (bypasses need for Pico commands)
-    send_continuous = true;
-    
     // Indicate ready
     blink_led(3, 200);
     digitalWrite(LED_BUILTIN, HIGH);
     
-    Serial.println("\nReady! Streaming IMU data continuously...");
+    Serial.println("\nReady! Waiting for commands...");
     Serial.println("Commands: STATUS_REQUEST, IMU_CALIBRATE, IMU_RESET, IMU_STREAM_ON/OFF");
 }
 
@@ -434,5 +434,3 @@ void blink_led(int times, int delay_ms) {
         delay(delay_ms);
     }
 }
-
-

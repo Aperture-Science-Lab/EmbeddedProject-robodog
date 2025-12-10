@@ -238,3 +238,114 @@ target_link_libraries(test_hc_sr04_debug
 
 pico_add_extra_outputs(test_hc_sr04_debug)
 
+# ============================================================================
+# SpotMicro Kinematics & Forward Gait Test
+# ============================================================================
+
+add_executable(test_kinematics_gait
+    test_kinematics_gait.cpp
+    pca9685.cpp
+    middleware/kinematics/spot_kinematics.cpp
+)
+
+pico_set_program_name(test_kinematics_gait "test_kinematics_gait")
+pico_set_program_version(test_kinematics_gait "0.1")
+
+pico_enable_stdio_uart(test_kinematics_gait 0)
+pico_enable_stdio_usb(test_kinematics_gait 1)
+
+target_include_directories(test_kinematics_gait PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+)
+
+target_link_libraries(test_kinematics_gait
+    pico_stdlib
+    hardware_i2c
+    hardware_gpio
+    m
+)
+
+pico_add_extra_outputs(test_kinematics_gait)
+
+# ============================================================================
+# I2C PCA9685 Diagnostic Test
+# ============================================================================
+
+add_executable(test_i2c_pca9685
+    test_i2c_pca9685.cpp
+)
+
+pico_set_program_name(test_i2c_pca9685 "test_i2c_pca9685")
+pico_set_program_version(test_i2c_pca9685 "0.1")
+
+pico_enable_stdio_uart(test_i2c_pca9685 0)
+pico_enable_stdio_usb(test_i2c_pca9685 1)
+
+target_include_directories(test_i2c_pca9685 PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+)
+
+target_link_libraries(test_i2c_pca9685
+    pico_stdlib
+    hardware_i2c
+    hardware_gpio
+)
+
+pico_add_extra_outputs(test_i2c_pca9685)
+
+# ============================================================================
+# Height Control Test (Shoulder Servos Only)
+# ============================================================================
+
+add_executable(test_height_control
+    test_height_control.cpp
+    pca9685.cpp
+)
+
+pico_set_program_name(test_height_control "test_height_control")
+pico_set_program_version(test_height_control "0.1")
+
+pico_enable_stdio_uart(test_height_control 0)
+pico_enable_stdio_usb(test_height_control 1)
+
+target_include_directories(test_height_control PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+)
+
+target_link_libraries(test_height_control
+    pico_stdlib
+    hardware_i2c
+    hardware_gpio
+)
+
+pico_add_extra_outputs(test_height_control)
+#========================================
+# Main Controller with Sensor Hub (Smart IMU + Ultrasonics)
+#========================================
+add_executable(main_controller 
+    main_controller.cpp 
+    pca9685.cpp 
+    lcd_16x2.cpp 
+    sensor_hub.cpp
+    middleware/kinematics/spot_kinematics_v2.cpp
+)
+
+target_include_directories(main_controller PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/middleware/kinematics
+)
+
+target_link_libraries(main_controller 
+    pico_stdlib 
+    pico_cyw43_arch_lwip_threadsafe_background
+    pico_lwip_mqtt
+    hardware_i2c 
+    hardware_pwm
+    hardware_uart
+    hardware_gpio
+    m
+)
+
+pico_enable_stdio_usb(main_controller 1)
+pico_enable_stdio_uart(main_controller 0)
+pico_add_extra_outputs(main_controller)
