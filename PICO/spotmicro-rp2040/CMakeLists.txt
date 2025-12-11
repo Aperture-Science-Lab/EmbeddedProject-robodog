@@ -320,13 +320,14 @@ target_link_libraries(test_height_control
 
 pico_add_extra_outputs(test_height_control)
 #========================================
-# Main Controller with Sensor Hub (Smart IMU + Ultrasonics)
+# Main Controller with Sensor Hub (Smart IMU + Ultrasonics + Stereo Vision)
 #========================================
 add_executable(main_controller 
     main_controller.cpp 
     pca9685.cpp 
     lcd_16x2.cpp 
     sensor_hub.cpp
+    stereo_vision.cpp
     middleware/kinematics/spot_kinematics_v2.cpp
 )
 

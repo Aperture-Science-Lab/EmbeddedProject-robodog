@@ -29,6 +29,7 @@
 #include "lcd_16x2.h"
 #include "spot_kinematics_v2.h"
 #include "sensor_hub.h"
+#include "stereo_vision.h"
 #include "pico/cyw43_arch.h"
 #include "lwip/apps/mqtt.h"
 #include "lwip/dns.h"
@@ -161,7 +162,10 @@ typedef enum {
     STATE_WALK_FWD,
     STATE_WALK_BWD,
     STATE_TURN_LEFT,
-    STATE_TURN_RIGHT
+    STATE_TURN_RIGHT,
+    STATE_AUTONOMOUS,      // Autonomous navigation with obstacle avoidance
+    STATE_AVOID_LEFT,      // Avoiding obstacle by turning left
+    STATE_AVOID_RIGHT      // Avoiding obstacle by turning right
 } robot_state_t;
 
 robot_state_t current_state = STATE_IDLE;
@@ -697,6 +701,111 @@ void update_lcd_status(const char* line1, const char* line2) {
     lcd_print(&lcd, line2);
 }
 
+// ============================================================================
+// AUTONOMOUS NAVIGATION WITH OBSTACLE AVOIDANCE
+// ============================================================================
+
+/**
+ * @brief Execute autonomous navigation with obstacle avoidance
+ * 
+ * Combines stereo vision camera data with ultrasonic sensors to navigate
+ * while avoiding obstacles. Called continuously when in STATE_AUTONOMOUS.
+ */
+void autonomous_navigate(void) {
+    // Update stereo vision (processes UART data from ESP32 camera)
+    stereo_vision_update();
+    
+    // Get stereo vision recommendation
+    const stereo_vision_state_t* vision = stereo_vision_get_state();
+    stereo_action_t camera_action = stereo_vision_get_action();
+    float speed_factor = stereo_vision_get_speed_factor();
+    
+    // Also check ultrasonic sensors for ground-level obstacles
+    // (stereo camera might miss low obstacles)
+    bool us_left_clear = !sensor_hub_obstacle_detected(0);   // Left ultrasonic
+    bool us_right_clear = !sensor_hub_obstacle_detected(1);  // Right ultrasonic
+    
+    // Combine stereo + ultrasonic data
+    // Ultrasonics override camera if they detect something close
+    stereo_action_t final_action = camera_action;
+    
+    if (!us_left_clear && !us_right_clear) {
+        // Both ultrasonics blocked - stop
+        final_action = STEREO_ACTION_STOP;
+    } else if (!us_left_clear && us_right_clear) {
+        // Left ultrasonic blocked - turn right
+        final_action = STEREO_ACTION_TURN_RIGHT;
+    } else if (us_left_clear && !us_right_clear) {
+        // Right ultrasonic blocked - turn left
+        final_action = STEREO_ACTION_TURN_LEFT;
+    }
+    
+    // Execute the avoidance action
+    static robot_state_t last_auto_state = STATE_AUTONOMOUS;
+    
+    switch (final_action) {
+        case STEREO_ACTION_CONTINUE:
+            // Path clear - walk forward at full speed
+            if (current_state != STATE_WALK_FWD) {
+                printf("[AUTO] Path clear, walking forward\n");
+                update_lcd_status("AUTO: Clear", "Walking FWD");
+            }
+            current_state = STATE_WALK_FWD;
+            gait_step(true);  // Forward
+            break;
+            
+        case STEREO_ACTION_SLOW_DOWN:
+            // Obstacle approaching - continue but slower
+            if (current_state != STATE_WALK_FWD) {
+                printf("[AUTO] Obstacle ahead (%.0fcm), slowing down\n", 
+                       vision->zones[STEREO_ZONE_CENTER].distance_cm);
+                update_lcd_status("AUTO: Slow", "Obstacle ahead");
+            }
+            current_state = STATE_WALK_FWD;
+            // Slow down by using longer cycle time
+            gait_params_v2.cycle_time_ms = (uint32_t)(2000 / speed_factor);
+            gait_step(true);
+            // Restore normal speed for next iteration
+            gait_params_v2.cycle_time_ms = 2000;
+            break;
+            
+        case STEREO_ACTION_TURN_LEFT:
+            // Obstacle on right - turn left to avoid
+            if (current_state != STATE_AVOID_LEFT) {
+                printf("[AUTO] Obstacle right (%.0fcm), turning left\n",
+                       vision->zones[STEREO_ZONE_RIGHT].distance_cm);
+                update_lcd_status("AUTO: Avoid", "Turning LEFT");
+                current_state = STATE_AVOID_LEFT;
+            }
+            turn_step(stereo_vision_get_turn_angle());  // Positive = left
+            break;
+            
+        case STEREO_ACTION_TURN_RIGHT:
+            // Obstacle on left - turn right to avoid
+            if (current_state != STATE_AVOID_RIGHT) {
+                printf("[AUTO] Obstacle left (%.0fcm), turning right\n",
+                       vision->zones[STEREO_ZONE_LEFT].distance_cm);
+                update_lcd_status("AUTO: Avoid", "Turning RIGHT");
+                current_state = STATE_AVOID_RIGHT;
+            }
+            turn_step(stereo_vision_get_turn_angle());  // Negative = right
+            break;
+            
+        case STEREO_ACTION_STOP:
+        case STEREO_ACTION_BACKUP:
+            // Obstacles everywhere - stop
+            if (current_state != STATE_IDLE) {
+                printf("[AUTO] Obstacles blocking path, stopping\n");
+                update_lcd_status("AUTO: STOP", "Path blocked!");
+                current_state = STATE_IDLE;
+                stand_neutral();
+            }
+            break;
+    }
+    
+    last_auto_state = current_state;
+}
+
 /**
  * @brief Show help menu
  */
@@ -740,6 +849,11 @@ void show_help() {
     printf("  SENSOR          Show detailed sensor status\n");
     printf("  IMU_CAL         Calibrate IMU (keep robot still!)\n");
     printf("  IMU_RESET       Reset IMU orientation\n");
+    printf("\n");
+    printf("AUTONOMOUS NAVIGATION (Stereo Camera + Ultrasonics):\n");
+    printf("  AUTO            Enable autonomous obstacle avoidance\n");
+    printf("  MANUAL          Return to manual control\n");
+    printf("  CAMERA          Show stereo camera status\n");
     printf("\n");
     printf("OTHER:\n");
     printf("  TAIL_WAG        Wag the tail\n");
@@ -1023,6 +1137,7 @@ void process_command(char* cmd) {
         current_state = STATE_IDLE;
         stand_neutral();
         update_lcd_status("Stopped", "Neutral");
+        // Note: This also stops autonomous mode
     }
     // TAIL_WAG - wag the tail (DC motor)
     else if (strcmp(cmd, "TAIL_WAG") == 0 || strcmp(cmd, "T") == 0) {
@@ -1134,6 +1249,30 @@ void process_command(char* cmd) {
         printf("Requesting IMU reset...\n");
         sensor_hub_reset_imu();
         update_lcd_status("IMU", "Reset!");
+    }
+    // =========================================================================
+    // AUTONOMOUS NAVIGATION
+    // =========================================================================
+    // AUTO - Enable autonomous navigation with obstacle avoidance
+    else if (strcmp(cmd, "AUTO") == 0) {
+        printf("Autonomous navigation ENABLED\n");
+        printf("  Using stereo camera + ultrasonic sensors for obstacle avoidance\n");
+        printf("  Send MANUAL or STOP to disable\n");
+        gait_phase = 0.0f;
+        last_gait_update = get_absolute_time();
+        current_state = STATE_AUTONOMOUS;
+        update_lcd_status("AUTO Mode", "Navigating...");
+    }
+    // MANUAL - Disable autonomous navigation
+    else if (strcmp(cmd, "MANUAL") == 0) {
+        printf("Manual control mode\n");
+        current_state = STATE_IDLE;
+        stand_neutral();
+        update_lcd_status("MANUAL Mode", "Ready");
+    }
+    // CAMERA - Show stereo camera status
+    else if (strcmp(cmd, "CAMERA") == 0) {
+        stereo_vision_print_status();
     }
     // HELP
     else if (strcmp(cmd, "HELP") == 0 || strcmp(cmd, "?") == 0) {
@@ -1248,6 +1387,15 @@ int main() {
     printf("  - Left ultrasonic: GP6/GP7\n");
     printf("  - Right ultrasonic: GP8/GP9\n");
     
+    // 8. Initialize stereo vision (ESP32 camera on UART1)
+    printf("Initializing stereo vision...\n");
+    if (stereo_vision_init()) {
+        printf("OK: Stereo vision on UART1 (GP0/GP1)\n");
+        printf("  - Waiting for ESP32 stereo camera connection...\n");
+    } else {
+        printf("WARNING: Stereo vision init failed (autonomous mode limited)\n");
+    };
+    
     // Update LCD
     update_lcd_status("Ready", "Press ? help");
 
@@ -1321,12 +1469,26 @@ int main() {
         } else if (current_state == STATE_TURN_RIGHT) {
             turn_step(-turn_angle);  // Turn right (negative angle)
             sleep_ms(20);
+        } else if (current_state == STATE_AUTONOMOUS || 
+                   current_state == STATE_AVOID_LEFT || 
+                   current_state == STATE_AVOID_RIGHT) {
+            // Autonomous navigation with obstacle avoidance
+            autonomous_navigate();
+            sleep_ms(20);      // 50Hz update rate
         } else {
             sleep_ms(10);      // Idle - faster timeout checking
         }
         
         // Update sensor hub (non-blocking - reads IMU data from Smart IMU, checks ultrasonics)
         sensor_hub_update();
+        
+        // Update stereo vision (non-blocking - reads camera data)
+        // Already called in autonomous_navigate(), but call here for manual mode too
+        if (current_state != STATE_AUTONOMOUS && 
+            current_state != STATE_AVOID_LEFT && 
+            current_state != STATE_AVOID_RIGHT) {
+            stereo_vision_update();
+        }
 
         // Publish status periodically over MQTT
         if (mqtt_connected) {
