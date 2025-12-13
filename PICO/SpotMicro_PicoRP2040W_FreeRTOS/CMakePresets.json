@@ -1,0 +1,39 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default Config",
+      "description": "Default configuration for Pico W RP2040 with FreeRTOS",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "PICO_SDK_PATH": "C:/Users/Victus/.pico-sdk/sdk/2.2.0"
+      },
+      "binaryDir": "${sourceDir}/build"
+    },
+    {
+      "name": "release",
+      "displayName": "Release Config",
+      "description": "Release configuration for Pico W RP2040 with FreeRTOS",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "PICO_SDK_PATH": "C:/Users/Victus/.pico-sdk/sdk/2.2.0"
+      },
+      "binaryDir": "${sourceDir}/build"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    }
+  ]
+}
