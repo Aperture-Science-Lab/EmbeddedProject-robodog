@@ -4,7 +4,7 @@
 # Original Authors: Trevor Ablett and Jonathan Kelly
 # University of Toronto Institute for Aerospace Studies
 #
-# Modified for robodog with IMU, GPS (optional), and two forward-facing ultrasonic sensors
+# Modified for robodog with IMU and GPS (Neo S3 v2 GPS module - required)
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -20,31 +20,30 @@ from rotations import angle_normalize, rpy_jacobian_axis_angle, skew_symmetric, 
 #     - accel_x, accel_y, accel_z: Accelerometer readings in g
 #     - gyro_x, gyro_y, gyro_z: Gyroscope readings in degrees per second (dps)
 #     - t: Timestamps in ms
-#   gps_data: Optional StampedData object with GPS position data
+#   gps_data: Required StampedData object with GPS position data (Neo S3 v2 GPS)
 #     - data: Position data [N, 3] in meters
-#     - t: Timestamps in ms
-#   ultrasonic_left/right: Optional StampedData objects with range measurements
-#     - data: Range measurements in meters (forward-facing)
 #     - t: Timestamps in ms
 #   gt: Optional ground truth data for comparison
 ################################################################################################
 
 ################################################################################################
-# Example: How to Load GPS Data
-################################################################################################
+# GPS Data Loading for Neo S3 v2 GPS Module
 # 
-# Option 1: Load from CSV file
-#   gps = load_gps_from_csv('gps_data.csv', 
-#                           reference_position=[40.7128, -74.0060, 0.0])  # NYC coordinates
+# The Neo S3 v2 GPS module outputs NMEA format sentences. GPS data is REQUIRED.
+# 
+# Option 1: Load from NMEA file (Recommended for Neo S3 v2)
+#   gps = load_gps_from_nmea('neo_s3_v2_gps.nmea', 
+#                           reference_position=[40.7128, -74.0060, 0.0])
 #
-# Option 2: Load from NMEA file
-#   gps = load_gps_from_nmea('gps_data.nmea')
+# Option 2: Load from CSV file (if you've converted NMEA to CSV)
+#   gps = load_gps_from_csv('neo_s3_v2_gps.csv', 
+#                          reference_position=[40.7128, -74.0060, 0.0])
 #
-# Option 3: Convert from list of GPS readings
+# Option 3: Convert from parsed GPS readings
 #   gps_readings = [
 #       {'latitude': 40.7128, 'longitude': -74.0060, 'altitude': 10.0, 't': 0},
 #       {'latitude': 40.7129, 'longitude': -74.0061, 'altitude': 10.5, 't': 1000},
-#       # ... more readings
+#       # ... more readings from Neo S3 v2 GPS
 #   ]
 #   gps = convert_gps_to_ekf_format(gps_readings, 
 #                                   reference_position=[40.7128, -74.0060, 0.0])
@@ -71,25 +70,31 @@ try:
     imu_f = data.get('imu_f', None)
     imu_w = data.get('imu_w', None)
     gps = data.get('gnss', None)  # Assumes already in ENU format
-    ultrasonic_left = data.get('ultrasonic_left', None)
-    ultrasonic_right = data.get('ultrasonic_right', None)
 except:
     # If pickle file doesn't exist, expect data to be provided directly
-    # You should provide: imu_data, gps (optional), ultrasonic_left, ultrasonic_right (optional)
+    # You must provide: imu_data and gps (required - Neo S3 v2 GPS)
     gt = None
     imu_f = None
     imu_w = None
     gps = None
-    ultrasonic_left = None
-    ultrasonic_right = None
 
-# Example: Load GPS from file (uncomment and adapt as needed)
-# gps = load_gps_from_csv('gps_data.csv')
-# OR
-# gps = load_gps_from_nmea('gps_data.nmea')
-# OR
-# gps_readings = [...]  # Your GPS data in lat/lon/alt format
-# gps = convert_gps_to_ekf_format(gps_readings)
+# Example: Load GPS from Neo S3 v2 GPS module (uncomment and adapt as needed)
+# Option 1: Load from NMEA file (Neo S3 v2 outputs NMEA format)
+# gps = load_gps_from_nmea('neo_s3_v2_gps.nmea', 
+#                          reference_position=[40.7128, -74.0060, 0.0])
+#
+# Option 2: Load from CSV file
+# gps = load_gps_from_csv('neo_s3_v2_gps.csv',
+#                        reference_position=[40.7128, -74.0060, 0.0])
+#
+# Option 3: Convert from list of GPS readings (if you parse NMEA yourself)
+# gps_readings = [
+#     {'latitude': 40.7128, 'longitude': -74.0060, 'altitude': 10.0, 't': 0},
+#     {'latitude': 40.7129, 'longitude': -74.0061, 'altitude': 10.5, 't': 1000},
+#     # ... more readings from Neo S3 v2 GPS
+# ]
+# gps = convert_gps_to_ekf_format(gps_readings,
+#                                 reference_position=[40.7128, -74.0060, 0.0])
 
 ################################################################################################
 # GPS Data Conversion Functions
@@ -370,15 +375,15 @@ def convert_robodog_imu_to_ekf_format(imu_data_list):
 #     # Assuming robodog_imu_data is a list of dictionaries with IMU readings
 #     imu_f, imu_w = convert_robodog_imu_to_ekf_format(robodog_imu_data)
 
-# Make GPS optional
+# GPS is required (Neo S3 v2 GPS module)
 if gps is None:
-    print("Warning: GPS data not available. EKF will run with IMU and ultrasonic sensors only.")
-
-# Ultrasonic sensors: expect forward-facing range measurements in meters
-if ultrasonic_left is None:
-    print("Warning: Left ultrasonic sensor data not available.")
-if ultrasonic_right is None:
-    print("Warning: Right ultrasonic sensor data not available.")
+    raise ValueError("GPS data is required but not provided. Please provide GPS data from Neo S3 v2 GPS module.")
+elif not hasattr(gps, 'data') or not hasattr(gps, 't'):
+    raise ValueError("GPS data must have 'data' and 't' attributes. Use convert_gps_to_ekf_format() or load_gps_from_nmea() to format GPS data.")
+elif len(gps.data) == 0:
+    raise ValueError("GPS data is empty. Please provide valid GPS readings from Neo S3 v2 GPS module.")
+else:
+    print(f"GPS data loaded: {len(gps.data)} readings from Neo S3 v2 GPS module")
 
 ################################################################################################
 # Plot ground truth trajectory if available
@@ -395,13 +400,6 @@ if gt is not None:
 
 ################################################################################################
 
-# --- Ultrasonic sensor configuration ---
-# Distance between the two ultrasonic sensors (meters)
-ultrasonic_spacing = 0.10  # Adjust based on robodog mounting
-# Sensor positions in robot frame (left/right along y-axis, forward along x-axis)
-ultrasonic_left_pos = np.array([0.0, +ultrasonic_spacing/2, 0.0])  # Forward, left
-ultrasonic_right_pos = np.array([0.0, -ultrasonic_spacing/2, 0.0])  # Forward, right
-
 #### 2. Constants ##############################################################################
 
 ################################################################################################
@@ -411,7 +409,6 @@ ultrasonic_right_pos = np.array([0.0, -ultrasonic_spacing/2, 0.0])  # Forward, r
 var_imu_f = 0.10      # IMU accelerometer variance (m/s²)²
 var_imu_w = 0.25      # IMU gyroscope variance (rad/s)²
 var_gps = 0.01        # GPS position variance (m)²
-var_ultrasonic = 0.05 # Ultrasonic range variance (m)²
 
 ################################################################################################
 # Constants for EKF
@@ -446,16 +443,20 @@ if gt is not None:
     p_est[0] = gt.p[0]
     v_est[0] = gt.v[0]
     q_est[0] = Quaternion(euler=gt.r[0]).to_numpy()
+elif gps is not None and len(gps.data) > 0:
+    # Initialize position from first GPS reading (Neo S3 v2 GPS)
+    p_est[0] = gps.data[0]
+    v_est[0] = np.array([0.0, 0.0, 0.0])  # Assume stationary at start
+    q_est[0] = np.array([1.0, 0.0, 0.0, 0.0])  # Identity quaternion (level orientation)
+    print(f"Initialized position from GPS: {p_est[0]}")
 else:
-    # Initialize with zeros or first IMU reading
+    # Initialize with zeros (should not happen if GPS validation passed)
     p_est[0] = np.array([0.0, 0.0, 0.0])
     v_est[0] = np.array([0.0, 0.0, 0.0])
     q_est[0] = np.array([1.0, 0.0, 0.0, 0.0])  # Identity quaternion
 
 p_cov[0] = np.eye(9) * 0.1  # Initial covariance (small uncertainty)
 gps_i = 0
-ultra_left_i = 0
-ultra_right_i = 0
 
 #### 4. Measurement Update Functions ##########################################################
 
@@ -494,87 +495,6 @@ def measurement_update(sensor_var, p_cov_check, y_k, p_check, v_check, q_check):
     # Compute corrected covariance
     p_cov_hat = (np.eye(9) - K @ h_jac) @ p_cov_check
 
-    return p_hat, v_hat, q_hat, p_cov_hat
-
-################################################################################################
-# Ultrasonic range measurement update (forward-facing)
-################################################################################################
-def ultrasonic_range_update(sensor_var, p_cov_check, range_measured, sensor_pos_robot, 
-                            p_check, v_check, q_check):
-    """
-    Forward-facing ultrasonic range measurement update.
-    
-    The ultrasonic sensor measures distance to an obstacle along the robot's forward direction.
-    Since we don't know the obstacle's absolute position, we use this measurement to:
-    1. Reduce position uncertainty along the forward direction
-    2. Provide a constraint that an obstacle exists at the measured range
-    
-    This is implemented as a covariance update that reduces uncertainty in the forward direction.
-    
-    Args:
-        sensor_var: Measurement variance
-        p_cov_check: Predicted covariance
-        range_measured: Measured range in meters
-        sensor_pos_robot: Sensor position in robot frame [3]
-        p_check: Predicted position [3]
-        v_check: Predicted velocity [3]
-        q_check: Predicted orientation quaternion [4]
-        
-    Returns:
-        Updated state and covariance
-    """
-    # Validate range measurement
-    if range_measured <= 0 or range_measured > 10.0:  # Reasonable range limits (0-10m)
-        return p_check, v_check, q_check, p_cov_check
-    
-    # Get rotation matrix from quaternion
-    C_ns = Quaternion(*q_check).to_mat()
-    
-    # Transform sensor position to world frame
-    sensor_pos_world = p_check + C_ns @ sensor_pos_robot
-    
-    # Forward direction in world frame (x-axis of robot frame)
-    forward_dir = C_ns[:, 0]
-    
-    # Measurement model: The range measurement constrains position uncertainty
-    # along the forward direction. We model this as a measurement that reduces
-    # the covariance in the forward direction.
-    
-    # Measurement Jacobian: range is sensitive to position along forward direction
-    # The measurement tells us about position uncertainty reduction in forward direction
-    H = np.zeros((1, 9))
-    H[0, 0:3] = forward_dir  # Sensitivity to position along forward direction
-    
-    # Measurement noise (higher variance for range measurements)
-    R = np.array([[sensor_var]])
-    
-    # Innovation covariance
-    S = H @ p_cov_check @ H.T + R
-    if S[0, 0] < 1e-10:
-        return p_check, v_check, q_check, p_cov_check
-    
-    # Kalman gain
-    K = p_cov_check @ H.T @ np.linalg.inv(S)
-    
-    # For forward-facing range sensors, we don't have a direct position measurement
-    # Instead, we use the range to reduce uncertainty. The "predicted" range is based on
-    # the current forward position uncertainty. We use a small innovation to trigger
-    # covariance reduction.
-    
-    # Simplified: Use range measurement to reduce forward direction uncertainty
-    # The innovation is small since we're mainly updating covariance
-    range_predicted = 0.0  # We don't predict range, we use it as constraint
-    innovation = range_measured - range_predicted
-    
-    # Small state update (mainly for covariance reduction)
-    delta_x = K @ innovation * 0.1  # Scale down to avoid large position jumps
-    p_hat = p_check + delta_x[:3]
-    v_hat = v_check + delta_x[3:6]
-    q_hat = Quaternion(axis_angle=angle_normalize(delta_x[6:])).quat_mult_left(q_check)
-    
-    # Covariance update (this is the main effect - reduces uncertainty)
-    p_cov_hat = (np.eye(9) - K @ H) @ p_cov_check
-    
     return p_hat, v_hat, q_hat, p_cov_hat
 
 #### 5. Main Filter Loop #######################################################################
@@ -630,24 +550,7 @@ for k in range(1, num_timesteps):
     Q = np.diag([var_imu_f, var_imu_f, var_imu_f, var_imu_w, var_imu_w, var_imu_w])
     p_cov_check = F @ p_cov_prev @ F.T + l_jac @ (delta_t**2 * Q) @ l_jac.T
 
-    # 3. GPS update (optional)
-    if gps is not None and hasattr(gps, 'data') and hasattr(gps, 't') and len(gps.data) > 0:
-        if gps_i < gps.data.shape[0]:
-            # Get current time from IMU data
-            if imu_f is not None and hasattr(imu_f, 't'):
-                current_time = imu_f.t[k]
-            elif imu_w is not None and hasattr(imu_w, 't'):
-                current_time = imu_w.t[k]
-            else:
-                current_time = k * 10  # Default: assume 100Hz (10ms intervals)
-            
-            if current_time >= gps.t[gps_i]:
-                p_check, v_check, q_check, p_cov_check = measurement_update(
-                    var_gps, p_cov_check, gps.data[gps_i], p_check, v_check, q_check
-                )
-                gps_i += 1
-
-    # 4. Ultrasonic updates (left and right, forward-facing range)
+    # 3. GPS update (required - Neo S3 v2 GPS)
     # Get current time from IMU data
     if imu_f is not None and hasattr(imu_f, 't'):
         current_time = imu_f.t[k]
@@ -656,29 +559,17 @@ for k in range(1, num_timesteps):
     else:
         current_time = k * 10  # Default: assume 100Hz (10ms intervals)
     
-    # Left ultrasonic sensor
-    if ultrasonic_left is not None and hasattr(ultrasonic_left, 'data') and hasattr(ultrasonic_left, 't'):
-        if ultra_left_i < ultrasonic_left.data.shape[0] and current_time >= ultrasonic_left.t[ultra_left_i]:
-            range_measured = ultrasonic_left.data[ultra_left_i]
-            # Validate measurement
-            if range_measured > 0 and range_measured <= 10.0:
-                p_check, v_check, q_check, p_cov_check = ultrasonic_range_update(
-                    var_ultrasonic, p_cov_check, range_measured, 
-                    ultrasonic_left_pos, p_check, v_check, q_check
-                )
-            ultra_left_i += 1
-    
-    # Right ultrasonic sensor
-    if ultrasonic_right is not None and hasattr(ultrasonic_right, 'data') and hasattr(ultrasonic_right, 't'):
-        if ultra_right_i < ultrasonic_right.data.shape[0] and current_time >= ultrasonic_right.t[ultra_right_i]:
-            range_measured = ultrasonic_right.data[ultra_right_i]
-            # Validate measurement
-            if range_measured > 0 and range_measured <= 10.0:
-                p_check, v_check, q_check, p_cov_check = ultrasonic_range_update(
-                    var_ultrasonic, p_cov_check, range_measured,
-                    ultrasonic_right_pos, p_check, v_check, q_check
-                )
-            ultra_right_i += 1
+    # Apply GPS update when timestamp matches
+    if gps_i < gps.data.shape[0]:
+        if current_time >= gps.t[gps_i]:
+            p_check, v_check, q_check, p_cov_check = measurement_update(
+                var_gps, p_cov_check, gps.data[gps_i], p_check, v_check, q_check
+            )
+            gps_i += 1
+    elif gps_i >= gps.data.shape[0] and k < num_timesteps - 1:
+        # Warn if we've run out of GPS data but still have IMU data
+        if k == num_timesteps - 1 or (k % 100 == 0):  # Only warn occasionally
+            print(f"Warning: GPS data exhausted at timestep {k}, continuing with IMU-only prediction")
 
     # Update states (save)
     p_est[k] = p_check
