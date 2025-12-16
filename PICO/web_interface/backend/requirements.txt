@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pyserial
+opencv-python
+numpy
+# torch
+# torchvision
+# scipy
+# matplotlib
