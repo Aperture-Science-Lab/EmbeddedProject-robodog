@@ -56,9 +56,8 @@ class RobotState:
         self.serial_lock = threading.Lock()
         
         # Camera Defaults
-        # Camera Defaults (Empty = No Connection)
-        # Note: Standard ESP32-CAM stream is "http://<IP>:81/stream"
-        self.cam_url_left = "http://192.168.137.150/stream" 
+        # Camera Defaults (Empty = discovered on startup)
+        self.cam_url_left = "" 
         self.cam_url_right = ""
         
         self.stereo_enabled = True
@@ -171,11 +170,13 @@ def scan_network_for_cameras():
     
     def check_ip(ip):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.15) # Fast timeout
+        s.settimeout(0.3)  # Slightly longer timeout
         try:
-            result = s.connect_ex((ip, 81))
+            # ESP32-CAM serves the index on port 80, stream on port 81
+            result = s.connect_ex((ip, 80))
             if result == 0:
-                print(f"Found Camera at {ip}")
+                print(f"Found ESP32-CAM at {ip}")
+                # The stream is at port 81
                 found.append(f"http://{ip}:81/stream")
         except:
             pass
@@ -184,8 +185,8 @@ def scan_network_for_cameras():
             
     threads = []
     for base_ip in subnets:
-        # Scan 100-200 (most common DHCP range) and 1-20
-        ranges = list(range(100, 200)) + list(range(1, 21))
+        # Scan common DHCP ranges, skip .1 (usually router)
+        ranges = list(range(100, 200)) + list(range(2, 21))
         for i in ranges:
             t = threading.Thread(target=check_ip, args=(base_ip + str(i),))
             threads.append(t)
@@ -358,9 +359,15 @@ def video_feed_right():
 
 @app.post("/api/config/cameras")
 def set_cameras(left: str, right: str):
-    # Strictly do not allow digits 0 or 1 to become integers
+    global streams
+    # Stop and clear existing streams so new ones will be created
+    for key in list(streams.keys()):
+        streams[key].running = False
+    streams.clear()
+    
     robot.cam_url_left = left 
     robot.cam_url_right = right
+    print(f"Cameras configured: LEFT={left}, RIGHT={right}")
     return {"status": "updated", "left": robot.cam_url_left, "right": robot.cam_url_right}
 
 @app.get("/api/scan_cameras")
@@ -368,8 +375,25 @@ def scan_api():
     found = scan_network_for_cameras()
     return {"cameras": found}
 
+# Auto-Discovery on Startup
+def auto_discover_cameras():
+    print("\n=== AUTO-DISCOVERING CAMERAS ===")
+    cams = scan_network_for_cameras()
+    if len(cams) >= 1:
+        robot.cam_url_left = cams[0]
+        print(f"LEFT CAM: {cams[0]}")
+    if len(cams) >= 2:
+        robot.cam_url_right = cams[1]
+        print(f"RIGHT CAM: {cams[1]}")
+    if len(cams) == 0:
+        print("No cameras found. Use the UI to scan again or enter IPs manually.")
+    print("=================================\n")
+
 # Initial Auto Connect
 try:
     auto_connect_serial()
 except:
     pass
+
+# Run camera discovery in background (non-blocking)
+threading.Thread(target=auto_discover_cameras, daemon=True).start()

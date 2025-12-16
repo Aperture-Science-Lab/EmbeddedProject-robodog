@@ -131,7 +131,8 @@ body {
 
 .vision-area {
   flex: 2;
-  gap: 20px;
+  gap: 15px;
+  overflow: visible;
 }
 
 .control-area {
@@ -146,7 +147,9 @@ body {
 .camera-feeds {
   display: flex;
   gap: 15px;
-  flex: 1;
+  height: 300px;
+  /* Fixed height so config is visible */
+  min-height: 200px;
 }
 
 .feed-box {
