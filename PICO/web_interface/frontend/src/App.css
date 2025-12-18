@@ -463,3 +463,213 @@
     transform: translateX(0);
   }
 }
+/* ============================================
+   Tab Navigation
+   ============================================ */
+
+.tab-nav {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  background: rgba(20, 20, 30, 0.6);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.tab-nav button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #707080;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tab-nav button:hover {
+  color: #a0a0b0;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-nav button.active {
+  color: #00d4ff;
+  background: rgba(0, 212, 255, 0.1);
+  border-color: rgba(0, 212, 255, 0.3);
+}
+
+.tab-nav button svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ============================================
+   Sensor Grid & Telemetry
+   ============================================ */
+
+.sensor-grid, .telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.sensor-item, .telem-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.85rem;
+}
+
+.sensor-item span:first-child, .telem-item span:first-child {
+  color: #707080;
+}
+
+.sensor-item span:last-child, .telem-item span:last-child {
+  font-weight: 600;
+  color: #e0e0e8;
+}
+
+.sensor-item.alert {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.sensor-item.alert span:last-child {
+  color: #ef4444;
+}
+
+.sensor-item .ok, .telem-item .ok {
+  color: #22c55e !important;
+}
+
+.sensor-item .error, .telem-item .error {
+  color: #ef4444 !important;
+}
+
+/* ============================================
+   Calibration Panel
+   ============================================ */
+
+.calibration-display {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+}
+
+.calibration-display > div {
+  padding: 10px 12px;
+  background: rgba(0, 212, 255, 0.05);
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  border-radius: 6px;
+  color: #a0c0d0;
+}
+
+.calibration-display b {
+  color: #00d4ff;
+  font-weight: 600;
+}
+
+/* Servo Sliders */
+.servo-control {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.servo-slider {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+}
+
+.servo-slider label {
+  font-size: 0.7rem;
+  color: #707080;
+  font-weight: 500;
+}
+
+.servo-slider input[type="range"] {
+  width: 100%;
+  height: 6px;
+  -webkit-appearance: none;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.servo-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  background: #00d4ff;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(0, 212, 255, 0.5);
+}
+
+/* ============================================
+   Button Variants
+   ============================================ */
+
+.lab-btn.danger {
+  background: linear-gradient(145deg, #dc2626, #b91c1c);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.lab-btn.danger:hover {
+  background: linear-gradient(145deg, #ef4444, #dc2626);
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+}
+
+.lab-btn.success {
+  background: linear-gradient(145deg, #16a34a, #15803d);
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.lab-btn.success:hover {
+  background: linear-gradient(145deg, #22c55e, #16a34a);
+  box-shadow: 0 0 15px rgba(34, 197, 94, 0.4);
+}
+
+/* ============================================
+   Connection Controls
+   ============================================ */
+
+.connection-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.connection-controls .lab-input {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+
+.connection-controls .lab-btn {
+  padding: 8px 14px;
+  font-size: 0.75rem;
+}
+
+/* Log card */
+.log-card {
+  max-height: 200px;
+}
+
+.log-card .log-terminal {
+  max-height: 140px;
+}

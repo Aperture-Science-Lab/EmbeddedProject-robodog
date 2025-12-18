@@ -13,6 +13,7 @@ import sys
 import json
 import requests
 import socket
+import asyncio
 
 # Import modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -51,11 +52,38 @@ class RobotState:
             "angles": [0,0,0,0],
             "depth": 0.0
         }
+        
+        # Serial (USB) connection
         self.serial_port = None
         self.serial_connected = False
         self.serial_lock = threading.Lock()
         
-        # Camera Defaults
+        # TCP (WiFi) connection to Pico
+        self.tcp_socket = None
+        self.tcp_connected = False
+        self.tcp_lock = threading.Lock()
+        self.pico_ip = ""  # Will be discovered or set manually
+        self.pico_port = 8080
+        
+        # Latest telemetry from Pico
+        self.pico_telemetry = {
+            "state": "UNKNOWN",
+            "head": {"angle": 90, "swing": False},
+            "imu": {"roll": 0, "pitch": 0, "yaw": 0, "ax": 0, "ay": 0, "az": 0},
+            "ir": {"front": False, "back": False},
+            "pir": {"front": False, "back": False},
+            "ldr": {"raw": 0, "percent": 0},
+            "gps": {"lat": 0, "lon": 0, "alt": 0, "sats": 0, "fix": False},
+            "us": {"left": 0, "right": 0},
+            "calibration": {
+                "shoulder": [60, 130, 120, 50],
+                "elbow": [90, 90, 90, 90],
+                "wrist": [50, 130, 50, 130]
+            },
+            "wifi": False,
+            "nano": False
+        }
+        
         # Camera Defaults (Empty = discovered on startup)
         self.cam_url_left = "" 
         self.cam_url_right = ""
@@ -65,6 +93,122 @@ class RobotState:
         self.focal_length = 700 # pixels (Estimate for 640x480)
         
 robot = RobotState()
+
+# ================= TCP Connection to Pico =================
+def tcp_connect_pico(ip: str, port: int = 8080):
+    """Connect to Pico's TCP server"""
+    try:
+        if robot.tcp_socket:
+            try:
+                robot.tcp_socket.close()
+            except: pass
+            
+        robot.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        robot.tcp_socket.settimeout(5.0)
+        robot.tcp_socket.connect((ip, port))
+        robot.tcp_socket.settimeout(0.1)  # Non-blocking reads
+        robot.tcp_connected = True
+        robot.pico_ip = ip
+        print(f"[TCP] Connected to Pico at {ip}:{port}")
+        
+        # Start TCP listener thread
+        threading.Thread(target=tcp_listener, daemon=True).start()
+        return True
+    except Exception as e:
+        print(f"[TCP] Failed to connect to {ip}:{port}: {e}")
+        robot.tcp_connected = False
+        return False
+
+def tcp_listener():
+    """Reads data from Pico TCP connection"""
+    buffer = ""
+    while robot.tcp_connected and robot.tcp_socket:
+        try:
+            data = robot.tcp_socket.recv(1024)
+            if not data:
+                print("[TCP] Connection closed by Pico")
+                robot.tcp_connected = False
+                break
+                
+            buffer += data.decode('utf-8', errors='ignore')
+            
+            # Process complete JSON lines
+            while '\n' in buffer:
+                line, buffer = buffer.split('\n', 1)
+                line = line.strip()
+                if line.startswith('{') and line.endswith('}'):
+                    try:
+                        telemetry = json.loads(line)
+                        if telemetry.get("type") == "telemetry":
+                            robot.pico_telemetry = telemetry
+                            # Also update EKF state for compatibility
+                            imu = telemetry.get("imu", {})
+                            robot.latest_ekf_state["imu"] = imu
+                        elif "status" in telemetry:
+                            print(f"[PICO] Status: {telemetry['status']}")
+                    except json.JSONDecodeError:
+                        pass
+        except socket.timeout:
+            pass
+        except Exception as e:
+            print(f"[TCP] Read error: {e}")
+            robot.tcp_connected = False
+            break
+        time.sleep(0.01)
+
+def tcp_send_command(cmd: str):
+    """Send command to Pico via TCP"""
+    if not robot.tcp_connected or not robot.tcp_socket:
+        return False
+    try:
+        with robot.tcp_lock:
+            robot.tcp_socket.sendall((cmd + "\n").encode())
+        return True
+    except Exception as e:
+        print(f"[TCP] Send error: {e}")
+        robot.tcp_connected = False
+        return False
+
+def scan_for_pico():
+    """Scan network for Pico's TCP server on port 8080"""
+    found = []
+    print("[SCAN] Looking for Pico on network...")
+    
+    # Get local IP subnets
+    subnets = ["192.168.1.", "192.168.0.", "192.168.137.", "192.168.4."]
+    try:
+        hostname = socket.gethostname()
+        local_ips = socket.gethostbyname_ex(hostname)[2]
+        for ip in local_ips:
+            if ip.startswith("192.168."):
+                part = ".".join(ip.split(".")[:3]) + "."
+                if part not in subnets:
+                    subnets.insert(0, part)
+    except: pass
+    
+    def check_pico(ip):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.3)
+        try:
+            result = s.connect_ex((ip, 8080))
+            if result == 0:
+                print(f"[SCAN] Found Pico at {ip}")
+                found.append(ip)
+        except: pass
+        finally:
+            s.close()
+    
+    threads = []
+    for base_ip in subnets:
+        for i in list(range(100, 200)) + list(range(2, 21)):
+            t = threading.Thread(target=check_pico, args=(base_ip + str(i),))
+            threads.append(t)
+            t.start()
+    
+    for t in threads:
+        t.join()
+    
+    return found
 
 # ================= Serial Manager =================
 def auto_connect_serial():
@@ -137,12 +281,22 @@ def send_serial_cmd_raw(cmd: str):
 
 # ================= Logic Processor =================
 def process_high_level_command(cmd: str):
+    """Send command to Pico via TCP (preferred) or Serial"""
     cmd_map = {
         "WALK": "W", "BACK": "B", "STOP": "S", 
-        "LEFT": "A", "RIGHT": "E", "NEUTRAL": "N", "SAVE": "SAVE"
+        "LEFT": "A", "RIGHT": "D", "NEUTRAL": "N", "SAVE": "SAVE",
+        "STAND": "NEUTRAL", "FORWARD": "W", "BACKWARD": "B"
     }
     primitive = cmd_map.get(cmd, cmd)
-    send_serial_cmd_raw(primitive)
+    
+    # Try TCP first (WiFi), then Serial (USB)
+    if robot.tcp_connected:
+        tcp_send_command(primitive)
+    elif robot.serial_connected:
+        send_serial_cmd_raw(primitive)
+    else:
+        print(f"[WARN] No connection to Pico, command '{primitive}' not sent")
+        return None
     return primitive
 
 # ================= Camera & Stereo =================
@@ -333,21 +487,78 @@ def gen_frames(src, is_stereo_feed=False):
 
 @app.get("/api/status")
 def get_status():
+    """Get full robot status including TCP connection and telemetry"""
     return {
         "serial_connected": robot.serial_connected,
-        "ekf_state": robot.latest_ekf_state
+        "tcp_connected": robot.tcp_connected,
+        "pico_ip": robot.pico_ip,
+        "ekf_state": robot.latest_ekf_state,
+        "telemetry": robot.pico_telemetry
     }
 
 @app.post("/api/connect")
 def connect_serial_endpoint(port: str = ""):
+    """Connect via USB Serial"""
     if not port:
         auto_connect_serial()
     return {"connected": robot.serial_connected}
 
+@app.post("/api/connect_tcp")
+def connect_tcp_endpoint(ip: str = ""):
+    """Connect to Pico via TCP/WiFi"""
+    if not ip:
+        # Auto-scan for Pico
+        picos = scan_for_pico()
+        if picos:
+            ip = picos[0]
+        else:
+            return {"connected": False, "error": "No Pico found on network"}
+    
+    success = tcp_connect_pico(ip, 8080)
+    return {"connected": success, "ip": ip if success else ""}
+
+@app.get("/api/scan_pico")
+def scan_pico_endpoint():
+    """Scan network for Pico devices"""
+    picos = scan_for_pico()
+    return {"picos": picos}
+
 @app.post("/api/command")
 def send_command(cmd: str):
+    """Send command to robot (via TCP or Serial)"""
     primitive = process_high_level_command(cmd)
-    return {"status": "sent", "primitive": primitive}
+    return {"status": "sent" if primitive else "no_connection", "primitive": primitive}
+
+@app.post("/api/servo")
+def set_servo(channel: int, angle: int):
+    """Set individual servo angle"""
+    cmd = f"SERVO_{channel}_{angle}"
+    process_high_level_command(cmd)
+    return {"status": "sent", "channel": channel, "angle": angle}
+
+@app.post("/api/calibration")
+def set_calibration(leg: str, shoulder: int, elbow: int, wrist: int):
+    """Set calibration for a specific leg (FR, FL, RR, RL)"""
+    cmd = f"CAL_{leg}_{shoulder}_{elbow}_{wrist}"
+    process_high_level_command(cmd)
+    return {"status": "sent", "leg": leg}
+
+@app.post("/api/set_home")
+def set_home():
+    """Set current servo positions as home/neutral"""
+    process_high_level_command("SET_HOME")
+    return {"status": "sent"}
+
+@app.post("/api/save")
+def save_calibration():
+    """Save calibration to flash"""
+    process_high_level_command("SAVE")
+    return {"status": "sent"}
+
+@app.get("/api/telemetry")
+def get_telemetry():
+    """Get latest telemetry from Pico"""
+    return robot.pico_telemetry
 
 @app.get("/api/video_feed_left")
 def video_feed_left():
@@ -389,11 +600,29 @@ def auto_discover_cameras():
         print("No cameras found. Use the UI to scan again or enter IPs manually.")
     print("=================================\n")
 
+def auto_discover_pico():
+    print("\n=== AUTO-DISCOVERING PICO ===")
+    picos = scan_for_pico()
+    if picos:
+        print(f"Found Pico at: {picos[0]}")
+        tcp_connect_pico(picos[0])
+    else:
+        print("No Pico found on network. Will try USB serial...")
+    print("==============================\n")
+
 # Initial Auto Connect
+print("\n" + "="*50)
+print("SpotMicro Backend Server Starting...")
+print("="*50 + "\n")
+
+# Try USB serial first
 try:
     auto_connect_serial()
 except:
     pass
+
+# Run Pico TCP discovery in background (non-blocking)
+threading.Thread(target=auto_discover_pico, daemon=True).start()
 
 # Run camera discovery in background (non-blocking)
 threading.Thread(target=auto_discover_cameras, daemon=True).start()

@@ -307,15 +307,55 @@ void tcp_broadcast(const char* data, uint16_t len) {
 
 /**
  * @brief Send JSON sensor data to all connected clients
+ * Includes: sensors, robot state, calibration, LCD status
  */
 void tcp_send_sensors(void) {
     if (tcp_client_count == 0) return;
     
-    char json_buffer[512];
-    sensor_hub_get_json(json_buffer, sizeof(json_buffer));
+    // Build comprehensive JSON with all robot data
+    char json_buffer[1024];
     
-    // Add newline for line-based parsing
-    strcat(json_buffer, "\n");
+    const char* state_names[] = {"IDLE", "WALK_FWD", "WALK_BWD", "TURN_LEFT", "TURN_RIGHT", "OBSTACLE_AVOID", "ESTOP"};
+    const char* state_str = (current_state >= 0 && current_state <= 6) ? state_names[current_state] : "UNKNOWN";
+    
+    snprintf(json_buffer, sizeof(json_buffer),
+        "{"
+        "\"type\":\"telemetry\","
+        "\"state\":\"%s\","
+        "\"head\":{\"angle\":%.1f,\"swing\":%s},"
+        "\"imu\":{\"roll\":%.2f,\"pitch\":%.2f,\"yaw\":%.2f,\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f},"
+        "\"ir\":{\"front\":%s,\"back\":%s},"
+        "\"pir\":{\"front\":%s,\"back\":%s},"
+        "\"ldr\":{\"raw\":%d,\"percent\":%.1f},"
+        "\"gps\":{\"lat\":%.6f,\"lon\":%.6f,\"alt\":%.1f,\"sats\":%d,\"fix\":%s},"
+        "\"us\":{\"left\":%.1f,\"right\":%.1f},"
+        "\"calibration\":{"
+            "\"shoulder\":[%d,%d,%d,%d],"
+            "\"elbow\":[%d,%d,%d,%d],"
+            "\"wrist\":[%d,%d,%d,%d]"
+        "},"
+        "\"wifi\":%s,"
+        "\"nano\":%s"
+        "}\n",
+        state_str,
+        head_current_angle, head_swing_enabled ? "true" : "false",
+        g_sensors.imu.roll, g_sensors.imu.pitch, g_sensors.imu.yaw,
+        g_sensors.imu.ax, g_sensors.imu.ay, g_sensors.imu.az,
+        g_sensors.ir_front.blocked ? "true" : "false",
+        g_sensors.ir_back.blocked ? "true" : "false",
+        g_sensors.pir_front.motion_detected ? "true" : "false",
+        g_sensors.pir_back.motion_detected ? "true" : "false",
+        g_sensors.ldr.raw_value, g_sensors.ldr.light_percent,
+        g_sensors.gps.latitude, g_sensors.gps.longitude, g_sensors.gps.altitude,
+        g_sensors.gps.satellites, g_sensors.gps.fix_valid ? "true" : "false",
+        g_sensors.us_left.distance_cm, g_sensors.us_right.distance_cm,
+        calibrated_shoulder[0], calibrated_shoulder[1], calibrated_shoulder[2], calibrated_shoulder[3],
+        calibrated_elbow[0], calibrated_elbow[1], calibrated_elbow[2], calibrated_elbow[3],
+        calibrated_wrist[0], calibrated_wrist[1], calibrated_wrist[2], calibrated_wrist[3],
+        wifi_connected ? "true" : "false",
+        g_sensors.nano_connected ? "true" : "false"
+    );
+    
     tcp_broadcast(json_buffer, strlen(json_buffer));
 }
 
@@ -929,12 +969,13 @@ void process_command(const char* cmd) {
         printf("LDR: Raw=%d Light=%.1f%%\n",
                g_sensors.ldr.raw_value, g_sensors.ldr.light_percent);
     }
-    // Calibration
+    // Calibration - Save
     else if (strcmp(cmd_upper, "SAVE") == 0) {
         xSemaphoreGive(state_mutex);
         save_settings_to_flash();
         xSemaphoreTake(state_mutex, portMAX_DELAY);
         update_lcd_status_safe("Settings", "Saved!");
+        tcp_send_status("SETTINGS_SAVED");
     }
     else if (strcmp(cmd_upper, "CAL_IMU") == 0) {
         sensor_hub_calibrate_imu();
@@ -943,6 +984,55 @@ void process_command(const char* cmd) {
     else if (strcmp(cmd_upper, "RESET_IMU") == 0) {
         sensor_hub_reset_imu();
         printf("[CMD] IMU reset requested\n");
+    }
+    // Neutral / Stand position
+    else if (strcmp(cmd_upper, "NEUTRAL") == 0 || strcmp(cmd_upper, "N") == 0 || strcmp(cmd_upper, "STAND") == 0) {
+        current_state = STATE_IDLE;
+        xSemaphoreGive(state_mutex);
+        stand_neutral();
+        xSemaphoreTake(state_mutex, portMAX_DELAY);
+        printf("[CMD] Neutral stance\n");
+        update_lcd_status_safe("Standing", "Neutral");
+        tcp_send_status("NEUTRAL");
+    }
+    // Tail Wag Commands
+    else if (strcmp(cmd_upper, "TAIL_WAG") == 0 || strcmp(cmd_upper, "WAG") == 0) {
+        // Wag the tail motor back and forth
+        printf("[CMD] Tail wagging!\n");
+        update_lcd_status_safe("Tail", "Wagging!");
+        tcp_send_status("TAIL_WAGGING");
+        xSemaphoreGive(state_mutex);
+        // Quick wag sequence using DC motor
+        for (int i = 0; i < 3; i++) {
+            gpio_put(MOTOR_IN1_PIN, 1);
+            gpio_put(MOTOR_IN2_PIN, 0);
+            sleep_ms(200);
+            gpio_put(MOTOR_IN1_PIN, 0);
+            gpio_put(MOTOR_IN2_PIN, 1);
+            sleep_ms(200);
+        }
+        gpio_put(MOTOR_IN1_PIN, 0);
+        gpio_put(MOTOR_IN2_PIN, 0);
+        xSemaphoreTake(state_mutex, portMAX_DELAY);
+        tcp_send_status("TAIL_STOPPED");
+    }
+    else if (strcmp(cmd_upper, "TAIL_LEFT") == 0) {
+        gpio_put(MOTOR_IN1_PIN, 1);
+        gpio_put(MOTOR_IN2_PIN, 0);
+        printf("[CMD] Tail left\n");
+        update_lcd_status_safe("Tail", "Left");
+    }
+    else if (strcmp(cmd_upper, "TAIL_RIGHT") == 0) {
+        gpio_put(MOTOR_IN1_PIN, 0);
+        gpio_put(MOTOR_IN2_PIN, 1);
+        printf("[CMD] Tail right\n");
+        update_lcd_status_safe("Tail", "Right");
+    }
+    else if (strcmp(cmd_upper, "TAIL_STOP") == 0) {
+        gpio_put(MOTOR_IN1_PIN, 0);
+        gpio_put(MOTOR_IN2_PIN, 0);
+        printf("[CMD] Tail stopped\n");
+        update_lcd_status_safe("Tail", "Stopped");
     }
     // Status
     else if (strcmp(cmd_upper, "STATUS") == 0) {
@@ -958,11 +1048,72 @@ void process_command(const char* cmd) {
     }
     else if (strcmp(cmd_upper, "HELP") == 0 || strcmp(cmd_upper, "?") == 0) {
         printf("\n=== Available Commands ===\n");
-        printf("Movement: WALK/W, BACK/B, STOP/S, LEFT/A, RIGHT/D, ESTOP\n");
+        printf("Movement: WALK/W, BACK/B, STOP/S, LEFT/A, RIGHT/D, ESTOP, NEUTRAL/N\n");
         printf("Head:     HEAD_ON, HEAD_OFF, HEAD_LEFT, HEAD_RIGHT, HEAD_CENTER, SCAN\n");
+        printf("Tail:     TAIL_WAG/WAG, TAIL_LEFT, TAIL_RIGHT, TAIL_STOP\n");
         printf("Sensors:  SENSORS, IMU, GPS, IR, PIR, LDR/LIGHT\n");
-        printf("Calibration: SAVE, CAL_IMU, RESET_IMU\n");
+        printf("Calibration: SET_HOME, GET_CAL, SAVE, CAL_IMU, RESET_IMU\n");
         printf("System:   STATUS, HELP\n");
+    }
+    // Calibration: Set home position for all servos (current position becomes neutral)
+    else if (strcmp(cmd_upper, "SET_HOME") == 0) {
+        // Save current servo positions as the new calibration
+        for (int i = 0; i < 4; i++) {
+            calibrated_shoulder[i] = (int)last_servo_angles[SHOULDER_CHANNELS[i]];
+            calibrated_elbow[i] = (int)last_servo_angles[ELBOW_CHANNELS[i]];
+            calibrated_wrist[i] = (int)last_servo_angles[WRIST_CHANNELS[i]];
+        }
+        printf("[CMD] Home position set to current angles\n");
+        printf("Shoulders: [%d, %d, %d, %d]\n", calibrated_shoulder[0], calibrated_shoulder[1], calibrated_shoulder[2], calibrated_shoulder[3]);
+        printf("Elbows: [%d, %d, %d, %d]\n", calibrated_elbow[0], calibrated_elbow[1], calibrated_elbow[2], calibrated_elbow[3]);
+        printf("Wrists: [%d, %d, %d, %d]\n", calibrated_wrist[0], calibrated_wrist[1], calibrated_wrist[2], calibrated_wrist[3]);
+        update_lcd_status_safe("Home Set", "Save to keep");
+        tcp_send_status("HOME_SET");
+    }
+    // Get current calibration values
+    else if (strcmp(cmd_upper, "GET_CAL") == 0 || strcmp(cmd_upper, "CALIBRATION") == 0) {
+        printf("\n=== Calibration Values ===\n");
+        printf("Shoulders: [%d, %d, %d, %d]\n", calibrated_shoulder[0], calibrated_shoulder[1], calibrated_shoulder[2], calibrated_shoulder[3]);
+        printf("Elbows: [%d, %d, %d, %d]\n", calibrated_elbow[0], calibrated_elbow[1], calibrated_elbow[2], calibrated_elbow[3]);
+        printf("Wrists: [%d, %d, %d, %d]\n", calibrated_wrist[0], calibrated_wrist[1], calibrated_wrist[2], calibrated_wrist[3]);
+    }
+    // Direct servo angle control: SERVO_<channel>_<angle>
+    else if (strncmp(cmd_upper, "SERVO_", 6) == 0) {
+        int channel = 0, angle = 0;
+        if (sscanf(cmd_upper + 6, "%d_%d", &channel, &angle) == 2) {
+            if (channel >= 0 && channel < TOTAL_SERVOS && angle >= 0 && angle <= 180) {
+                set_servo_safe(channel, (float)angle);
+                printf("[CMD] Servo %d -> %d°\n", channel, angle);
+                char lcd_line[17];
+                snprintf(lcd_line, sizeof(lcd_line), "Servo %d: %d", channel, angle);
+                update_lcd_status_safe("Manual Servo", lcd_line);
+            } else {
+                printf("[ERROR] Invalid servo %d or angle %d\n", channel, angle);
+            }
+        }
+    }
+    // Set calibration for specific leg: CAL_<LEG>_<S>_<E>_<W>
+    // Example: CAL_FR_60_90_50 sets Front Right: shoulder=60, elbow=90, wrist=50
+    else if (strncmp(cmd_upper, "CAL_", 4) == 0) {
+        char leg[3];
+        int s, e, w;
+        if (sscanf(cmd_upper + 4, "%2s_%d_%d_%d", leg, &s, &e, &w) == 4) {
+            int leg_idx = -1;
+            if (strcmp(leg, "FR") == 0) leg_idx = 0;
+            else if (strcmp(leg, "FL") == 0) leg_idx = 1;
+            else if (strcmp(leg, "RR") == 0) leg_idx = 2;
+            else if (strcmp(leg, "RL") == 0) leg_idx = 3;
+            
+            if (leg_idx >= 0 && s >= 0 && s <= 180 && e >= 0 && e <= 180 && w >= 0 && w <= 180) {
+                calibrated_shoulder[leg_idx] = s;
+                calibrated_elbow[leg_idx] = e;
+                calibrated_wrist[leg_idx] = w;
+                printf("[CMD] Calibration set: %s -> S=%d E=%d W=%d\n", leg, s, e, w);
+                tcp_send_status("CAL_UPDATED");
+            } else {
+                printf("[ERROR] Invalid calibration: %s S=%d E=%d W=%d\n", leg, s, e, w);
+            }
+        }
     }
     else {
         printf("[CMD] Unknown command: %s\n", cmd_upper);
