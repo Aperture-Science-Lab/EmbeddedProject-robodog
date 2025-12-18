@@ -158,10 +158,6 @@ typedef struct {
     ultrasonic_data_t us_left;
     ultrasonic_data_t us_right;
     
-    // Ultrasonic sensors (direct on Pico)
-    ultrasonic_data_t us_left;
-    ultrasonic_data_t us_right;
-    
     // Obstacle detection (computed from IR sensors)
     bool obstacle_front;            // Front IR blocked
     bool obstacle_back;             // Back IR blocked
