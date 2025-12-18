@@ -3,15 +3,22 @@
  * @brief Sensor Hub - Manages all sensors for SpotMicro
  * 
  * Handles:
- * - Communication with Nano RP2040 Connect (Smart IMU via UART)
- * - HC-SR04 Ultrasonic sensors (2x)
- * - Future sensor expansion
+ * - Communication with Nano RP2040 Connect via UART (IMU, IR, PIR, LDR, GPS)
+ * - HC-SR04 Ultrasonic sensors (2x) - Direct GPIO on Pico
+ * 
+ * Nano Sensors (via UART):
+ * - IMU (LSM6DSOX) - Roll, Pitch, Yaw, Accel, Gyro
+ * - Front IR Sensor - Obstacle detection
+ * - Back IR Sensor - Obstacle detection  
+ * - Front PIR Sensor - Motion detection
+ * - Back PIR Sensor - Motion detection
+ * - LDR - Light level
+ * - GPS Module - Location data
  * 
  * UART Communication with Nano:
- * - GP16 (UART0_TX) -> Nano GPIO0/TX (Pin 16) [SWAPPED: Pico RX input]
- * - GP17 (UART0_RX) <- Nano GPIO1/RX (Pin 17) [SWAPPED: Pico TX output]
+ * - GP16 (UART0_TX) -> Nano GPIO1 (RX)
+ * - GP17 (UART0_RX) <- Nano GPIO0 (TX)
  * - 115200 baud, 8N1
- * NOTE: This is "backwards" from typical TX->RX, but matches working hardware
  */
 
 #ifndef SENSOR_HUB_H
@@ -29,20 +36,17 @@ extern "C" {
 // Pin Definitions
 // ============================================================================
 
-// Smart IMU UART (Nano RP2040 Connect)
-// Using UART0 on GP16/GP17 (Pico pins 21/22)
-// Pin 21: GP16 = UART0 TX -> Nano GPIO1 (RX)
-// Pin 22: GP17 = UART0 RX <- Nano GPIO0 (TX)
+// Smart Sensor UART (Nano RP2040 Connect)
 #define IMU_UART_ID     uart0
-#define IMU_UART_TX_PIN 16      // GP16 (Pin 21, UART0 TX) -> Nano GPIO1 (RX)
-#define IMU_UART_RX_PIN 17      // GP17 (Pin 22, UART0 RX) <- Nano GPIO0 (TX)
+#define IMU_UART_TX_PIN 16      // GP16 -> Nano GPIO1 (RX)
+#define IMU_UART_RX_PIN 17      // GP17 <- Nano GPIO0 (TX)
 #define IMU_UART_BAUD   115200
 
-// Ultrasonic Sensor 1 (Left)
+// Ultrasonic Sensor 1 (Left) - Direct on Pico
 #define US1_TRIG_PIN    6       // GP6
 #define US1_ECHO_PIN    7       // GP7
 
-// Ultrasonic Sensor 2 (Right)
+// Ultrasonic Sensor 2 (Right) - Direct on Pico
 #define US2_TRIG_PIN    8       // GP8
 #define US2_ECHO_PIN    9       // GP9
 
@@ -79,6 +83,48 @@ typedef struct {
 } imu_data_t;
 
 /**
+ * @brief IR Sensor Data (Front and Back)
+ */
+typedef struct {
+    bool blocked;           // true if obstacle detected (IR beam broken)
+    bool valid;
+    uint32_t last_update_ms;
+} ir_sensor_data_t;
+
+/**
+ * @brief PIR Sensor Data (Motion Detection)
+ */
+typedef struct {
+    bool motion_detected;   // true if motion detected
+    bool valid;
+    uint32_t last_update_ms;
+} pir_sensor_data_t;
+
+/**
+ * @brief LDR (Light Dependent Resistor) Data
+ */
+typedef struct {
+    uint16_t raw_value;     // ADC raw value (0-4095)
+    float light_percent;    // Light level as percentage (0-100%)
+    bool valid;
+    uint32_t last_update_ms;
+} ldr_data_t;
+
+/**
+ * @brief GPS Data
+ */
+typedef struct {
+    float latitude;
+    float longitude;
+    float altitude;         // meters
+    float speed;            // km/h
+    int satellites;         // Number of satellites
+    bool fix_valid;         // true if GPS has valid fix
+    bool valid;
+    uint32_t last_update_ms;
+} gps_data_t;
+
+/**
  * @brief Ultrasonic Sensor Data
  */
 typedef struct {
@@ -91,17 +137,37 @@ typedef struct {
  * @brief Complete Sensor Status
  */
 typedef struct {
-    // IMU data
+    // IMU data (from Nano)
     imu_data_t imu;
     
-    // Ultrasonic sensors
-    ultrasonic_data_t us_left;      // Left sensor
-    ultrasonic_data_t us_right;     // Right sensor
+    // IR Sensors (from Nano)
+    ir_sensor_data_t ir_front;
+    ir_sensor_data_t ir_back;
     
-    // Obstacle detection
-    bool obstacle_left;             // Obstacle detected on left
-    bool obstacle_right;            // Obstacle detected on right
-    float obstacle_threshold_cm;    // Distance threshold for obstacle
+    // PIR Sensors (from Nano)
+    pir_sensor_data_t pir_front;
+    pir_sensor_data_t pir_back;
+    
+    // LDR (from Nano)
+    ldr_data_t ldr;
+    
+    // GPS (from Nano)
+    gps_data_t gps;
+    
+    // Ultrasonic sensors (direct on Pico)
+    ultrasonic_data_t us_left;
+    ultrasonic_data_t us_right;
+    
+    // Ultrasonic sensors (direct on Pico)
+    ultrasonic_data_t us_left;
+    ultrasonic_data_t us_right;
+    
+    // Obstacle detection (computed from IR sensors)
+    bool obstacle_front;            // Front IR blocked
+    bool obstacle_back;             // Back IR blocked
+    bool obstacle_left;             // Left ultrasonic obstacle
+    bool obstacle_right;            // Right ultrasonic obstacle
+    float obstacle_threshold_cm;    // Distance threshold for ultrasonic
     
     // System status
     bool nano_connected;
@@ -119,7 +185,7 @@ extern sensor_status_t g_sensors;
 
 /**
  * @brief Initialize sensor hub
- * Sets up UART for IMU and GPIO for ultrasonic sensors
+ * Sets up UART for Nano and GPIO for ultrasonic sensors
  * @return true if successful
  */
 bool sensor_hub_init(void);
@@ -129,6 +195,12 @@ bool sensor_hub_init(void);
  * Call this regularly in main loop (non-blocking)
  */
 void sensor_hub_update(void);
+
+/**
+ * @brief Request all sensor data from Nano
+ * Sends SENSORS command
+ */
+void sensor_hub_request_all_sensors(void);
 
 /**
  * @brief Request status from Nano IMU
@@ -149,24 +221,52 @@ void sensor_hub_calibrate_imu(void);
 void sensor_hub_reset_imu(void);
 
 /**
- * @brief Enable/disable continuous IMU streaming
+ * @brief Enable/disable continuous sensor streaming from Nano
  * @param enable true to enable streaming
  */
-void sensor_hub_set_imu_streaming(bool enable);
+void sensor_hub_set_streaming(bool enable);
 
 /**
  * @brief Read ultrasonic sensor
- * @param sensor_id 0 = front, 1 = rear
+ * @param sensor_id 0 = left, 1 = right
  * @return Distance in cm (0 if no echo or error)
  */
 float sensor_hub_read_ultrasonic(int sensor_id);
 
 /**
- * @brief Check if obstacle detected
- * @param sensor_id 0 = front, 1 = rear
- * @return true if obstacle within threshold
+ * @brief Check if obstacle detected (IR or ultrasonic)
+ * @param sensor_id 0 = front, 1 = back, 2 = left, 3 = right
+ * @return true if obstacle detected
  */
 bool sensor_hub_obstacle_detected(int sensor_id);
+
+/**
+ * @brief Get IR sensor blocked status
+ * @param front true for front sensor, false for back
+ * @return true if IR beam is blocked
+ */
+bool sensor_hub_ir_blocked(bool front);
+
+/**
+ * @brief Get PIR motion detected status
+ * @param front true for front sensor, false for back
+ * @return true if motion detected
+ */
+bool sensor_hub_pir_motion(bool front);
+
+/**
+ * @brief Get light level from LDR
+ * @return Light level as percentage (0-100%)
+ */
+float sensor_hub_get_light_level(void);
+
+/**
+ * @brief Get GPS coordinates
+ * @param lat Pointer to store latitude
+ * @param lon Pointer to store longitude
+ * @return true if GPS has valid fix
+ */
+bool sensor_hub_get_gps(float* lat, float* lon);
 
 /**
  * @brief Set obstacle detection threshold
@@ -175,12 +275,20 @@ bool sensor_hub_obstacle_detected(int sensor_id);
 void sensor_hub_set_obstacle_threshold(float threshold_cm);
 
 /**
- * @brief Get formatted status string
+ * @brief Get formatted status string (for serial/web output)
  * @param buffer Output buffer
  * @param size Buffer size
  * @return Number of characters written
  */
 int sensor_hub_get_status_string(char* buffer, size_t size);
+
+/**
+ * @brief Get JSON formatted sensor data (for web interface)
+ * @param buffer Output buffer
+ * @param size Buffer size
+ * @return Number of characters written
+ */
+int sensor_hub_get_json(char* buffer, size_t size);
 
 /**
  * @brief Print sensor status to console
