@@ -992,108 +992,183 @@ int main() {
     printf("║        SpotMicro FreeRTOS Controller v2.0                     ║\n");
     printf("║        With WiFi TCP Server + IR Obstacle Avoidance          ║\n");
     printf("╚═══════════════════════════════════════════════════════════════╝\n");
+    printf("Build: %s %s\n", __DATE__, __TIME__);
     printf("\n");
     
     // Initialize CYW43 (WiFi chip on Pico W)
     printf("[BOOT] Initializing CYW43...\n");
+    fflush(stdout);
     if (cyw43_arch_init()) {
         printf("[ERROR] Failed to initialize CYW43\n");
         while(1) sleep_ms(1000);
     }
     cyw43_arch_enable_sta_mode();
     printf("[OK] CYW43 initialized\n");
+    fflush(stdout);
     
     // Create FreeRTOS Objects
     printf("[BOOT] Creating RTOS objects...\n");
+    fflush(stdout);
     i2c_mutex = xSemaphoreCreateRecursiveMutex();
+    printf("  [DEBUG] i2c_mutex created: %s\n", i2c_mutex ? "OK" : "FAIL");
+    fflush(stdout);
+    
     state_mutex = xSemaphoreCreateMutex();
+    printf("  [DEBUG] state_mutex created: %s\n", state_mutex ? "OK" : "FAIL");
+    fflush(stdout);
+    
     cmd_queue = xQueueCreate(10, sizeof(char*));
+    printf("  [DEBUG] cmd_queue created: %s\n", cmd_queue ? "OK" : "FAIL");
+    fflush(stdout);
     
     if (!i2c_mutex || !state_mutex || !cmd_queue) {
         printf("[ERROR] Failed to create RTOS objects\n");
         while(1) sleep_ms(1000);
     }
     printf("[OK] RTOS objects created\n");
+    fflush(stdout);
     
-    // Initialize I2C
-    printf("[BOOT] Initializing I2C0...\n");
-    i2c_init(I2C_PORT, 100000);
+    // Initialize I2C - Use 100kHz for LCD compatibility
+    printf("[BOOT] Initializing I2C0 at 100kHz...\n");
+    fflush(stdout);
+    i2c_init(I2C_PORT, 100000);  // 100kHz - standard mode for LCD
+    printf("  [DEBUG] i2c_init done\n");
+    fflush(stdout);
+    
     gpio_set_function(I2C_SDA_PIN, GPIO_FUNC_I2C);
     gpio_set_function(I2C_SCL_PIN, GPIO_FUNC_I2C);
+    printf("  [DEBUG] GPIO functions set\n");
+    fflush(stdout);
+    
     gpio_pull_up(I2C_SDA_PIN);
     gpio_pull_up(I2C_SCL_PIN);
-    sleep_ms(50);
-    printf("[OK] I2C0 initialized (SDA=GP4, SCL=GP5)\n");
+    printf("  [DEBUG] Pull-ups enabled\n");
+    fflush(stdout);
     
-    // Detect I2C Devices
+    sleep_ms(100);  // Give I2C bus time to stabilize
+    printf("[OK] I2C0 initialized (SDA=GP%d, SCL=GP%d)\n", I2C_SDA_PIN, I2C_SCL_PIN);
+    fflush(stdout);
+    
+    // Detect I2C Devices with longer timeout
     printf("[BOOT] Scanning I2C devices...\n");
+    fflush(stdout);
     uint8_t test_byte;
-    int lcd_ok = (i2c_read_timeout_us(I2C_PORT, LCD_ADDR, &test_byte, 1, false, 3000) >= 0);
-    int pca_ok = (i2c_read_timeout_us(I2C_PORT, PCA_ADDR, &test_byte, 1, false, 3000) >= 0);
+    
+    printf("  [DEBUG] Checking LCD at 0x%02X...\n", LCD_ADDR);
+    fflush(stdout);
+    int lcd_ok = (i2c_read_timeout_us(I2C_PORT, LCD_ADDR, &test_byte, 1, false, 10000) >= 0);
+    printf("  [DEBUG] LCD check result: %s\n", lcd_ok ? "FOUND" : "NOT FOUND");
+    fflush(stdout);
+    
+    printf("  [DEBUG] Checking PCA9685 at 0x%02X...\n", PCA_ADDR);
+    fflush(stdout);
+    int pca_ok = (i2c_read_timeout_us(I2C_PORT, PCA_ADDR, &test_byte, 1, false, 10000) >= 0);
+    printf("  [DEBUG] PCA9685 check result: %s\n", pca_ok ? "FOUND" : "NOT FOUND");
+    fflush(stdout);
     
     if (lcd_ok) printf("[FOUND] LCD at 0x27\n");
     else printf("[MISS] LCD at 0x27\n");
     
     if (pca_ok) printf("[FOUND] PCA9685 at 0x40\n");
     else {
-        printf("[ERROR] PCA9685 not found!\n");
-        while(1) sleep_ms(1000);
+        printf("[ERROR] PCA9685 not found! Check wiring.\n");
+        printf("[INFO] Continuing without servos...\n");
+        // Don't halt - continue for debugging
     }
+    fflush(stdout);
     
     // Initialize LCD
+    printf("[BOOT] Initializing LCD...\n");
+    fflush(stdout);
     if (lcd_ok) {
+        printf("  [DEBUG] Calling lcd_init...\n");
+        fflush(stdout);
         if (lcd_init(&lcd, I2C_PORT, I2C_SDA_PIN, I2C_SCL_PIN, 16, 2, LCD_ADDR)) {
+            printf("  [DEBUG] lcd_init returned true\n");
+            fflush(stdout);
             lcd_backlight_on(&lcd);
             lcd_print(&lcd, "SpotMicro v2.0");
             lcd_set_cursor(&lcd, 0, 1);
             lcd_print(&lcd, "Booting...");
             printf("[OK] LCD initialized\n");
+        } else {
+            printf("  [DEBUG] lcd_init returned false\n");
         }
+    } else {
+        printf("[SKIP] LCD not present\n");
     }
+    fflush(stdout);
     
     // Initialize PCA9685
     printf("[BOOT] Initializing PCA9685...\n");
-    if (!pca9685_init(&pca, I2C_PORT, I2C_SDA_PIN, I2C_SCL_PIN, PCA_ADDR)) {
-        printf("[ERROR] PCA9685 init failed!\n");
-        while(1) sleep_ms(1000);
+    fflush(stdout);
+    if (pca_ok) {
+        if (!pca9685_init(&pca, I2C_PORT, I2C_SDA_PIN, I2C_SCL_PIN, PCA_ADDR)) {
+            printf("[ERROR] PCA9685 init failed!\n");
+            printf("[INFO] Continuing without servos...\n");
+            pca_ok = false;
+        } else {
+            printf("[OK] PCA9685 initialized\n");
+        }
+    } else {
+        printf("[SKIP] PCA9685 not present\n");
     }
-    printf("[OK] PCA9685 initialized\n");
+    fflush(stdout);
     
     // Initialize Servos (12 leg + 1 head)
     printf("[BOOT] Initializing %d servos...\n", TOTAL_SERVOS);
-    for (int i = 0; i < TOTAL_SERVOS; i++) {
-        servo_init(&servos[i], &pca, i, 500, 2500, 0, 180);
+    fflush(stdout);
+    if (pca_ok) {
+        for (int i = 0; i < TOTAL_SERVOS; i++) {
+            servo_init(&servos[i], &pca, i, 500, 2500, 0, 180);
+        }
+        printf("[OK] %d servos ready\n", TOTAL_SERVOS);
+    } else {
+        printf("[SKIP] Servos not initialized (no PCA9685)\n");
     }
-    printf("[OK] %d servos ready\n", TOTAL_SERVOS);
+    fflush(stdout);
     
     // Load Settings
-    printf("[BOOT] Loading settings...\n");
+    printf("[BOOT] Loading settings from flash...\n");
+    fflush(stdout);
     if (!load_settings_from_flash()) {
+        printf("  [DEBUG] Using default calibration\n");
         for(int i = 0; i < 4; i++) {
             calibrated_shoulder[i] = DEFAULT_SHOULDER_ANGLES[i];
             calibrated_elbow[i] = DEFAULT_ELBOW_ANGLES[i];
             calibrated_wrist[i] = DEFAULT_WRIST_ANGLES[i];
         }
     }
+    printf("[OK] Settings loaded\n");
+    fflush(stdout);
     
     // Set neutral pose
     printf("[BOOT] Setting neutral pose...\n");
-    stand_neutral();
-    set_servo_safe(HEAD_SERVO_CH, HEAD_CENTER);  // Center head
-    sleep_ms(500);
-    printf("[OK] Neutral pose set\n");
+    fflush(stdout);
+    if (pca_ok) {
+        stand_neutral();
+        set_servo_safe(HEAD_SERVO_CH, HEAD_CENTER);  // Center head
+        sleep_ms(500);
+        printf("[OK] Neutral pose set\n");
+    } else {
+        printf("[SKIP] Neutral pose (no servos)\n");
+    }
+    fflush(stdout);
     
     // Initialize Kinematics
     printf("[BOOT] Initializing kinematics...\n");
+    fflush(stdout);
     gait_init_walk(&gait_params_v2);
     robot_state_init(&robot_state_v2, 100.0f);
     gait_params_v2.step_length = 25.0f;
     gait_params_v2.step_height = 20.0f;
     gait_params_v2.cycle_time_ms = 2000;
     printf("[OK] Kinematics ready\n");
+    fflush(stdout);
     
     // Initialize Motors
     printf("[BOOT] Initializing tail motor...\n");
+    fflush(stdout);
     gpio_init(MOTOR_IN1_PIN);
     gpio_set_dir(MOTOR_IN1_PIN, GPIO_OUT);
     gpio_init(MOTOR_IN2_PIN);
@@ -1101,23 +1176,53 @@ int main() {
     gpio_put(MOTOR_IN1_PIN, 0);
     gpio_put(MOTOR_IN2_PIN, 0);
     printf("[OK] Motor ready\n");
+    fflush(stdout);
     
     // Initialize Sensor Hub
-    printf("[BOOT] Initializing sensor hub...\n");
+    printf("[BOOT] Initializing sensor hub (UART to Nano)...\n");
+    fflush(stdout);
     sensor_hub_init();
     printf("[OK] Sensors ready\n");
+    fflush(stdout);
     
     // Create FreeRTOS Tasks
     printf("[BOOT] Creating tasks...\n");
+    fflush(stdout);
+    
+    printf("  [DEBUG] Creating Blink task...\n");
+    fflush(stdout);
     xTaskCreate(vBlinkTask,      "Blink",     256,  NULL, 1, NULL);
+    
+    printf("  [DEBUG] Creating Control task...\n");
+    fflush(stdout);
     xTaskCreate(vControlTask,    "Control",   1024, NULL, 4, NULL);
+    
+    printf("  [DEBUG] Creating Sensors task...\n");
+    fflush(stdout);
     xTaskCreate(vSensorTask,     "Sensors",   512,  NULL, 3, NULL);
+    
+    printf("  [DEBUG] Creating Obstacle task...\n");
+    fflush(stdout);
     xTaskCreate(vObstacleTask,   "Obstacle",  512,  NULL, 3, NULL);
+    
+    printf("  [DEBUG] Creating HeadSwing task...\n");
+    fflush(stdout);
     xTaskCreate(vHeadSwingTask,  "HeadSwing", 256,  NULL, 1, NULL);
+    
+    printf("  [DEBUG] Creating Comms task...\n");
+    fflush(stdout);
     xTaskCreate(vCommsTask,      "Comms",     1024, NULL, 2, NULL);
+    
+    printf("  [DEBUG] Creating Telemetry task...\n");
+    fflush(stdout);
     xTaskCreate(vTelemetryTask,  "Telemetry", 512,  NULL, 1, NULL);
+    
+    printf("  [DEBUG] Creating WiFi task...\n");
+    fflush(stdout);
     xTaskCreate(vWifiTask,       "WiFi",      2048, NULL, 2, NULL);
-    printf("[OK] Tasks created\n");
+    
+    printf("[OK] All 8 tasks created\n");
+    fflush(stdout);
     
     // Update LCD
     if (lcd_ok) {
@@ -1128,7 +1233,9 @@ int main() {
     }
     
     // Start Scheduler
-    printf("\n[BOOT COMPLETE] Starting FreeRTOS Scheduler...\n\n");
+    printf("\n[BOOT COMPLETE] Starting FreeRTOS Scheduler...\n");
+    printf("===========================================\n\n");
+    fflush(stdout);
     vTaskStartScheduler();
 
     // Should never reach here
