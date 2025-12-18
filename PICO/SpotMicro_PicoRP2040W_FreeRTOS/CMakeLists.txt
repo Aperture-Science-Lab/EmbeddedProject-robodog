@@ -51,10 +51,14 @@ target_link_libraries(SpotMicro
     hardware_pwm
     hardware_gpio
     hardware_flash
+    hardware_sync
     tinyusb_device
     tinyusb_board
     FreeRTOS-Kernel
     FreeRTOS-Kernel-Heap4
+    # WiFi/Networking (for Pico W)
+    pico_cyw43_arch_lwip_threadsafe_background
+    pico_lwip_http
 )
 
 # --- USB OUTPUT (CRITICAL - must be enabled for serial debugging) ---

@@ -4,24 +4,24 @@
  * 
  * Features:
  * - FreeRTOS multi-tasking for real-time control
- * - WiFi/MQTT integration for web interface commands
+ * - USB Serial command interface (connect via any serial terminal)
+ * - WiFi TCP Server for direct web interface connection (no MQTT needed!)
  * - All sensor data from Nano (IMU, IR, PIR, LDR, GPS)
  * - Automatic IR obstacle avoidance
  * - 13th servo (head) periodic swing
- * - Serial command interface
+ * 
+ * Connection Options:
+ * 1. USB Serial: Connect via USB, use any serial terminal (PuTTY, Arduino IDE, etc.)
+ * 2. WiFi TCP: Connect website directly to Pico's IP on port 8080
  * 
  * Tasks:
  * 1. vBlinkTask (Priority: 1) - Debug heartbeat
  * 2. vControlTask (Priority: 4) - Gait engine and servo control @ 50Hz
  * 3. vSensorTask (Priority: 3) - Sensor polling @ 10Hz  
- * 4. vCommsTask (Priority: 2) - Serial/MQTT command processing
+ * 4. vCommsTask (Priority: 2) - Serial command processing
  * 5. vObstacleTask (Priority: 3) - IR obstacle avoidance
  * 6. vHeadSwingTask (Priority: 1) - Head servo periodic swing
- * 7. vMqttTask (Priority: 2) - WiFi/MQTT for web commands
- * 
- * Mutexes:
- * - i2c_mutex: Protects I2C0 (PCA9685 Servos, LCD)
- * - state_mutex: Protects shared robot state variables
+ * 7. vTcpServerTask (Priority: 2) - WiFi TCP server for web commands
  */
 
 #include <stdio.h>
@@ -43,9 +43,9 @@
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 
-// lwIP for networking
-#include "lwip/apps/mqtt.h"
-#include "lwip/dns.h"
+// lwIP for TCP Server
+#include "lwip/tcp.h"
+#include "lwip/err.h"
 
 // Custom Drivers
 #include "drivers/pca9685.h"
@@ -53,6 +53,13 @@
 #include "middleware/kinematics/spot_kinematics_v2.h"
 #include "sensor_hub.h"
 #include "wifi_config.h"
+
+// ============================================================================
+// TCP SERVER CONFIGURATION
+// ============================================================================
+#define TCP_PORT 8080           // Web interface connects here
+#define TCP_MAX_CLIENTS 4       // Max simultaneous connections
+#define TCP_BUFFER_SIZE 256
 
 // ============================================================================
 // FLASH STORAGE DEFINITIONS
@@ -119,7 +126,7 @@ const char* LEG_NAMES[4] = {"FR", "FL", "RR", "RL"};
 // ============================================================================
 SemaphoreHandle_t i2c_mutex;     // Protects I2C access (Servos, LCD)
 SemaphoreHandle_t state_mutex;   // Protects Global State variables
-QueueHandle_t     cmd_queue;     // Queue for incoming commands (from MQTT/Serial)
+QueueHandle_t     cmd_queue;     // Queue for incoming commands (from TCP/Serial)
 
 // ============================================================================
 // GLOBALS
@@ -128,9 +135,10 @@ pca9685_t pca;
 lcd_t lcd;
 servo_t servos[TOTAL_SERVOS];
 
-// MQTT Client
-static mqtt_client_t *mqtt_client = NULL;
-static bool mqtt_connected = false;
+// TCP Server State
+static struct tcp_pcb *tcp_server_pcb = NULL;
+static struct tcp_pcb *tcp_clients[TCP_MAX_CLIENTS] = {NULL};
+static int tcp_client_count = 0;
 static bool wifi_connected = false;
 
 // Servo Deadband
@@ -276,60 +284,179 @@ void stand_neutral(void) {
 }
 
 // ============================================================================
-// MQTT CALLBACKS
+// TCP SERVER FUNCTIONS (Direct Web Connection - No MQTT!)
 // ============================================================================
 
-static void mqtt_incoming_publish_cb(void *arg, const char *topic, u32_t tot_len) {
-    printf("[MQTT] Incoming publish: topic=%s, len=%lu\n", topic, tot_len);
-}
+// Forward declaration
+void process_command(const char* cmd);
 
-static void mqtt_incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t flags) {
-    // Allocate buffer and copy command
-    char* cmd_copy = (char*)pvPortMalloc(len + 1);
-    if (cmd_copy) {
-        memcpy(cmd_copy, data, len);
-        cmd_copy[len] = '\0';
-        printf("[MQTT] Received command: %s\n", cmd_copy);
-        
-        // Queue the command for processing by CommsTask
-        if (xQueueSend(cmd_queue, &cmd_copy, 0) != pdTRUE) {
-            vPortFree(cmd_copy);  // Free if queue is full
+/**
+ * @brief Send data to all connected TCP clients
+ */
+void tcp_broadcast(const char* data, uint16_t len) {
+    for (int i = 0; i < TCP_MAX_CLIENTS; i++) {
+        if (tcp_clients[i] != NULL) {
+            err_t err = tcp_write(tcp_clients[i], data, len, TCP_WRITE_FLAG_COPY);
+            if (err == ERR_OK) {
+                tcp_output(tcp_clients[i]);
+            }
         }
     }
 }
 
-static void mqtt_sub_request_cb(void *arg, err_t result) {
-    printf("[MQTT] Subscribe result: %d\n", result);
+/**
+ * @brief Send JSON sensor data to all connected clients
+ */
+void tcp_send_sensors(void) {
+    if (tcp_client_count == 0) return;
+    
+    char json_buffer[512];
+    sensor_hub_get_json(json_buffer, sizeof(json_buffer));
+    
+    // Add newline for line-based parsing
+    strcat(json_buffer, "\n");
+    tcp_broadcast(json_buffer, strlen(json_buffer));
 }
 
-static void mqtt_connection_cb(mqtt_client_t *client, void *arg, mqtt_connection_status_t status) {
-    if (status == MQTT_CONNECT_ACCEPTED) {
-        printf("[MQTT] Connected to broker!\n");
-        mqtt_connected = true;
+/**
+ * @brief Send status message to all clients
+ */
+void tcp_send_status(const char* status) {
+    if (tcp_client_count == 0) return;
+    
+    char buffer[128];
+    snprintf(buffer, sizeof(buffer), "{\"status\":\"%s\"}\n", status);
+    tcp_broadcast(buffer, strlen(buffer));
+}
+
+/**
+ * @brief TCP receive callback - processes commands from web clients
+ */
+static err_t tcp_recv_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
+    if (p == NULL) {
+        // Connection closed by client
+        printf("[TCP] Client disconnected\n");
         
-        // Subscribe to command topic
-        mqtt_subscribe(client, MQTT_TOPIC_COMMAND, 1, mqtt_sub_request_cb, NULL);
-        mqtt_set_inpub_callback(client, mqtt_incoming_publish_cb, mqtt_incoming_data_cb, NULL);
+        // Remove from client list
+        for (int i = 0; i < TCP_MAX_CLIENTS; i++) {
+            if (tcp_clients[i] == tpcb) {
+                tcp_clients[i] = NULL;
+                tcp_client_count--;
+                break;
+            }
+        }
         
-        update_lcd_status_safe("WiFi+MQTT", "Connected!");
-    } else {
-        printf("[MQTT] Connection failed: %d\n", status);
-        mqtt_connected = false;
+        tcp_close(tpcb);
+        return ERR_OK;
     }
+    
+    if (err != ERR_OK) {
+        pbuf_free(p);
+        return err;
+    }
+    
+    // Process received data as command
+    char cmd_buffer[TCP_BUFFER_SIZE];
+    uint16_t len = p->tot_len < TCP_BUFFER_SIZE - 1 ? p->tot_len : TCP_BUFFER_SIZE - 1;
+    pbuf_copy_partial(p, cmd_buffer, len, 0);
+    cmd_buffer[len] = '\0';
+    
+    // Remove newlines/carriage returns
+    for (int i = 0; i < len; i++) {
+        if (cmd_buffer[i] == '\n' || cmd_buffer[i] == '\r') {
+            cmd_buffer[i] = '\0';
+            break;
+        }
+    }
+    
+    if (strlen(cmd_buffer) > 0) {
+        printf("[TCP] Received: %s\n", cmd_buffer);
+        process_command(cmd_buffer);
+    }
+    
+    // Acknowledge received data
+    tcp_recved(tpcb, p->tot_len);
+    pbuf_free(p);
+    
+    return ERR_OK;
 }
 
-void mqtt_publish_status(const char* message) {
-    if (mqtt_connected && mqtt_client) {
-        mqtt_publish(mqtt_client, MQTT_TOPIC_STATUS, message, strlen(message), 0, 0, NULL, NULL);
-    }
+/**
+ * @brief TCP error callback
+ */
+static void tcp_error_callback(void *arg, err_t err) {
+    printf("[TCP] Error: %d\n", err);
 }
 
-void mqtt_publish_sensors(void) {
-    if (mqtt_connected && mqtt_client) {
-        char json_buffer[512];
-        sensor_hub_get_json(json_buffer, sizeof(json_buffer));
-        mqtt_publish(mqtt_client, MQTT_TOPIC_SENSOR, json_buffer, strlen(json_buffer), 0, 0, NULL, NULL);
+/**
+ * @brief TCP accept callback - new client connected
+ */
+static err_t tcp_accept_callback(void *arg, struct tcp_pcb *newpcb, err_t err) {
+    if (err != ERR_OK || newpcb == NULL) {
+        return ERR_VAL;
     }
+    
+    // Find empty slot for new client
+    int slot = -1;
+    for (int i = 0; i < TCP_MAX_CLIENTS; i++) {
+        if (tcp_clients[i] == NULL) {
+            slot = i;
+            break;
+        }
+    }
+    
+    if (slot == -1) {
+        printf("[TCP] Max clients reached, rejecting connection\n");
+        tcp_abort(newpcb);
+        return ERR_ABRT;
+    }
+    
+    tcp_clients[slot] = newpcb;
+    tcp_client_count++;
+    
+    printf("[TCP] Client connected (slot %d, total: %d)\n", slot, tcp_client_count);
+    
+    // Set callbacks
+    tcp_recv(newpcb, tcp_recv_callback);
+    tcp_err(newpcb, tcp_error_callback);
+    
+    // Send welcome message with IP info
+    char welcome[128];
+    snprintf(welcome, sizeof(welcome), 
+             "{\"event\":\"connected\",\"ip\":\"%s\",\"port\":%d}\n",
+             ip4addr_ntoa(netif_ip4_addr(netif_list)), TCP_PORT);
+    tcp_write(newpcb, welcome, strlen(welcome), TCP_WRITE_FLAG_COPY);
+    tcp_output(newpcb);
+    
+    return ERR_OK;
+}
+
+/**
+ * @brief Start TCP server
+ */
+bool tcp_server_start(void) {
+    tcp_server_pcb = tcp_new();
+    if (tcp_server_pcb == NULL) {
+        printf("[TCP] Failed to create PCB\n");
+        return false;
+    }
+    
+    err_t err = tcp_bind(tcp_server_pcb, IP_ADDR_ANY, TCP_PORT);
+    if (err != ERR_OK) {
+        printf("[TCP] Failed to bind to port %d\n", TCP_PORT);
+        return false;
+    }
+    
+    tcp_server_pcb = tcp_listen(tcp_server_pcb);
+    if (tcp_server_pcb == NULL) {
+        printf("[TCP] Failed to listen\n");
+        return false;
+    }
+    
+    tcp_accept(tcp_server_pcb, tcp_accept_callback);
+    
+    printf("[TCP] Server started on port %d\n", TCP_PORT);
+    return true;
 }
 
 // ============================================================================
@@ -536,7 +663,7 @@ void vHeadSwingTask(void* pvParameters) {
 }
 
 /**
- * @brief Comms Task - Serial and MQTT command processing
+ * @brief Comms Task - Serial and TCP command processing
  */
 void vCommsTask(void* pvParameters) {
     char input_buffer[64];
@@ -567,13 +694,13 @@ void vCommsTask(void* pvParameters) {
             }
         }
         
-        // 2. Check MQTT Command Queue
-        char* mqtt_msg = NULL;
-        if (xQueueReceive(cmd_queue, &mqtt_msg, 0) == pdTRUE) {
-            if (mqtt_msg) {
-                printf("[CMD] From queue: %s\n", mqtt_msg);
-                process_command(mqtt_msg);
-                vPortFree(mqtt_msg);
+        // 2. Check TCP Command Queue
+        char* tcp_msg = NULL;
+        if (xQueueReceive(cmd_queue, &tcp_msg, 0) == pdTRUE) {
+            if (tcp_msg) {
+                printf("[CMD] From web client: %s\n", tcp_msg);
+                process_command(tcp_msg);
+                vPortFree(tcp_msg);
             }
         }
         
@@ -608,24 +735,24 @@ void vSensorTask(void* pvParameters) {
 }
 
 /**
- * @brief Telemetry Task - Publishes sensor data over MQTT
+ * @brief Telemetry Task - Sends sensor data to connected TCP clients
  */
 void vTelemetryTask(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xFrequency = pdMS_TO_TICKS(500); // 2Hz for MQTT publish
+    const TickType_t xFrequency = pdMS_TO_TICKS(500); // 2Hz
 
     for (;;) {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
         
-        // Publish sensor data to MQTT
-        mqtt_publish_sensors();
+        // Send sensor data to all connected web clients
+        tcp_send_sensors();
     }
 }
 
 /**
- * @brief WiFi/MQTT Task - Manages connection
+ * @brief WiFi Task - Connects to WiFi and starts TCP server
  */
-void vMqttTask(void* pvParameters) {
+void vWifiTask(void* pvParameters) {
     // Wait for other tasks to start
     vTaskDelay(pdMS_TO_TICKS(1000));
     
@@ -636,47 +763,42 @@ void vMqttTask(void* pvParameters) {
     if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, 
                                            CYW43_AUTH_WPA2_AES_PSK, 30000) == 0) {
         wifi_connected = true;
-        printf("[WIFI] Connected! IP: %s\n", ip4addr_ntoa(netif_ip4_addr(netif_list)));
-        update_lcd_status_safe("WiFi OK", ip4addr_ntoa(netif_ip4_addr(netif_list)));
+        const char* ip = ip4addr_ntoa(netif_ip4_addr(netif_list));
+        printf("[WIFI] Connected! IP: %s\n", ip);
+        
+        char lcd_ip[17];
+        snprintf(lcd_ip, sizeof(lcd_ip), "IP:%s", ip);
+        update_lcd_status_safe("WiFi OK", lcd_ip);
+        
+        // Start TCP server for web interface
+        vTaskDelay(pdMS_TO_TICKS(500));
+        if (tcp_server_start()) {
+            printf("[WIFI] Web interface ready at http://%s:%d\n", ip, TCP_PORT);
+            
+            char lcd_port[17];
+            snprintf(lcd_port, sizeof(lcd_port), "Port:%d", TCP_PORT);
+            update_lcd_status_safe(lcd_ip, lcd_port);
+        }
     } else {
         printf("[WIFI] Failed to connect\n");
-        update_lcd_status_safe("WiFi FAIL", "Offline Mode");
-        // Continue without WiFi - serial commands still work
+        update_lcd_status_safe("WiFi FAIL", "USB Serial OK");
+        // Continue without WiFi - USB serial commands still work!
     }
     
-    // Connect to MQTT if WiFi is up
-    if (wifi_connected) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        
-        ip_addr_t broker_ip;
-        if (ip4addr_aton(MQTT_BROKER_IP, &broker_ip)) {
-            mqtt_client = mqtt_client_new();
-            
-            struct mqtt_connect_client_info_t ci = {0};
-            ci.client_id = MQTT_CLIENT_ID;
-            ci.keep_alive = 60;
-            
-            printf("[MQTT] Connecting to %s:%d...\n", MQTT_BROKER_IP, MQTT_BROKER_PORT);
-            mqtt_client_connect(mqtt_client, &broker_ip, MQTT_BROKER_PORT, 
-                               mqtt_connection_cb, NULL, &ci);
-        }
-    }
-    
-    // Keep connection alive
+    // Monitor connection status
     for (;;) {
-        if (wifi_connected && !mqtt_connected && mqtt_client) {
-            // Try to reconnect periodically
+        if (!wifi_connected) {
+            // Try to reconnect every 30 seconds
             static int reconnect_counter = 0;
             reconnect_counter++;
-            if (reconnect_counter >= 300) {  // Every 30 seconds
+            if (reconnect_counter >= 300) {
                 reconnect_counter = 0;
-                ip_addr_t broker_ip;
-                if (ip4addr_aton(MQTT_BROKER_IP, &broker_ip)) {
-                    struct mqtt_connect_client_info_t ci = {0};
-                    ci.client_id = MQTT_CLIENT_ID;
-                    ci.keep_alive = 60;
-                    mqtt_client_connect(mqtt_client, &broker_ip, MQTT_BROKER_PORT,
-                                       mqtt_connection_cb, NULL, &ci);
+                printf("[WIFI] Attempting reconnect...\n");
+                if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, 
+                                                       CYW43_AUTH_WPA2_AES_PSK, 10000) == 0) {
+                    wifi_connected = true;
+                    printf("[WIFI] Reconnected!\n");
+                    tcp_server_start();
                 }
             }
         }
@@ -707,13 +829,13 @@ void process_command(const char* cmd) {
         current_state = STATE_WALK_FWD;
         printf("[CMD] Walking forward\n");
         update_lcd_status_safe("Walking", "Forward");
-        mqtt_publish_status("WALKING_FORWARD");
+        tcp_send_status("WALKING_FORWARD");
     }
     else if (strcmp(cmd_upper, "BACK") == 0 || strcmp(cmd_upper, "B") == 0 || strcmp(cmd_upper, "BACKWARD") == 0) {
         current_state = STATE_WALK_BWD;
         printf("[CMD] Walking backward\n");
         update_lcd_status_safe("Walking", "Backward");
-        mqtt_publish_status("WALKING_BACKWARD");
+        tcp_send_status("WALKING_BACKWARD");
     }
     else if (strcmp(cmd_upper, "STOP") == 0 || strcmp(cmd_upper, "S") == 0) {
         current_state = STATE_IDLE;
@@ -722,19 +844,19 @@ void process_command(const char* cmd) {
         xSemaphoreTake(state_mutex, portMAX_DELAY);
         printf("[CMD] Stopped\n");
         update_lcd_status_safe("Stopped", "Idle");
-        mqtt_publish_status("STOPPED");
+        tcp_send_status("STOPPED");
     }
     else if (strcmp(cmd_upper, "LEFT") == 0 || strcmp(cmd_upper, "A") == 0 || strcmp(cmd_upper, "TURN_LEFT") == 0) {
         current_state = STATE_TURN_LEFT;
         printf("[CMD] Turning left\n");
         update_lcd_status_safe("Turning", "Left");
-        mqtt_publish_status("TURNING_LEFT");
+        tcp_send_status("TURNING_LEFT");
     }
     else if (strcmp(cmd_upper, "RIGHT") == 0 || strcmp(cmd_upper, "D") == 0 || strcmp(cmd_upper, "TURN_RIGHT") == 0) {
         current_state = STATE_TURN_RIGHT;
         printf("[CMD] Turning right\n");
         update_lcd_status_safe("Turning", "Right");
-        mqtt_publish_status("TURNING_RIGHT");
+        tcp_send_status("TURNING_RIGHT");
     }
     // Emergency Stop
     else if (strcmp(cmd_upper, "ESTOP") == 0 || strcmp(cmd_upper, "EMERGENCY") == 0) {
@@ -744,19 +866,19 @@ void process_command(const char* cmd) {
         xSemaphoreTake(state_mutex, portMAX_DELAY);
         printf("[CMD] EMERGENCY STOP!\n");
         update_lcd_status_safe("EMERGENCY", "STOP!");
-        mqtt_publish_status("EMERGENCY_STOP");
+        tcp_send_status("EMERGENCY_STOP");
     }
     // Head Servo Commands
     else if (strcmp(cmd_upper, "HEAD_ON") == 0 || strcmp(cmd_upper, "SCAN") == 0) {
         head_swing_enabled = true;
         printf("[CMD] Head swing enabled\n");
-        mqtt_publish_status("HEAD_SWING_ON");
+        tcp_send_status("HEAD_SWING_ON");
     }
     else if (strcmp(cmd_upper, "HEAD_OFF") == 0) {
         head_swing_enabled = false;
         head_target_angle = HEAD_CENTER;
         printf("[CMD] Head swing disabled\n");
-        mqtt_publish_status("HEAD_SWING_OFF");
+        tcp_send_status("HEAD_SWING_OFF");
     }
     else if (strcmp(cmd_upper, "HEAD_LEFT") == 0) {
         head_swing_enabled = false;
@@ -824,10 +946,10 @@ void process_command(const char* cmd) {
     // Status
     else if (strcmp(cmd_upper, "STATUS") == 0) {
         printf("\n=== System Status ===\n");
-        printf("State: %d  WiFi: %s  MQTT: %s\n", 
+        printf("State: %d  WiFi: %s  TCP Clients: %d\n", 
                current_state,
                wifi_connected ? "Connected" : "Disconnected",
-               mqtt_connected ? "Connected" : "Disconnected");
+               tcp_client_count);
         printf("Nano: %s  Head Swing: %s\n",
                g_sensors.nano_connected ? "Online" : "Offline",
                head_swing_enabled ? "Enabled" : "Disabled");
@@ -859,7 +981,7 @@ int main() {
     printf("\n");
     printf("╔═══════════════════════════════════════════════════════════════╗\n");
     printf("║        SpotMicro FreeRTOS Controller v2.0                     ║\n");
-    printf("║        With WiFi/MQTT + IR Obstacle Avoidance                 ║\n");
+    printf("║        With WiFi TCP Server + IR Obstacle Avoidance          ║\n");
     printf("╚═══════════════════════════════════════════════════════════════╝\n");
     printf("\n");
     
@@ -985,7 +1107,7 @@ int main() {
     xTaskCreate(vHeadSwingTask,  "HeadSwing", 256,  NULL, 1, NULL);
     xTaskCreate(vCommsTask,      "Comms",     1024, NULL, 2, NULL);
     xTaskCreate(vTelemetryTask,  "Telemetry", 512,  NULL, 1, NULL);
-    xTaskCreate(vMqttTask,       "MQTT",      2048, NULL, 2, NULL);
+    xTaskCreate(vWifiTask,       "WiFi",      2048, NULL, 2, NULL);
     printf("[OK] Tasks created\n");
     
     // Update LCD
