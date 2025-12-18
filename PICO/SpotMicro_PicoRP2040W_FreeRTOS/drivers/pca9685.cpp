@@ -135,9 +135,7 @@ void servo_init(servo_t *servo, pca9685_t *controller, uint8_t channel,
     servo->max_pulse = max_pulse;
     servo->min_angle = min_angle;
     servo->max_angle = max_angle;
-    
-    printf("Servo initialized on channel %d (pulse: %d-%d µs, angle: %d-%d°)\n",
-           channel, min_pulse, max_pulse, min_angle, max_angle);
+    // Debug print removed - too verbose for 13 servos
 }
 
 // Convert angle to pulse width
@@ -167,7 +165,7 @@ float servo_pulse_to_angle(servo_t *servo, uint16_t pulse_us) {
 void servo_set_angle(servo_t *servo, float angle) {
     uint16_t pulse_us = servo_angle_to_pulse(servo, angle);
     servo_set_pulse(servo, pulse_us);
-    printf("Servo CH%d: %.1f° (pulse: %d µs)\n", servo->channel, angle, pulse_us);
+    // Debug print removed - was causing serial spam during head swing
 }
 
 // Set servo pulse width in microseconds
@@ -185,5 +183,4 @@ void servo_set_pulse(servo_t *servo, uint16_t pulse_us) {
 // Disable servo (stop PWM signal)
 void servo_disable(servo_t *servo) {
     pca9685_set_pwm(servo->controller, servo->channel, 0, 0);
-    printf("Servo CH%d disabled\n", servo->channel);
 }

@@ -793,6 +793,77 @@ void vTelemetryTask(void* pvParameters) {
 }
 
 /**
+ * @brief LCD Status Task - Updates LCD with current robot state
+ */
+void vLcdStatusTask(void* pvParameters) {
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xFrequency = pdMS_TO_TICKS(1000); // 1Hz
+    robot_state_t last_displayed_state = STATE_IDLE;
+    bool first_run = true;
+    
+    // Wait for system to be fully initialized
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    
+    for (;;) {
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
+        
+        robot_state_t state_copy;
+        if (xSemaphoreTake(state_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            state_copy = current_state;
+            xSemaphoreGive(state_mutex);
+        } else {
+            continue;
+        }
+        
+        // Only update LCD if state changed or first run
+        if (state_copy != last_displayed_state || first_run) {
+            first_run = false;
+            last_displayed_state = state_copy;
+            
+            const char* line1 = "";
+            const char* line2 = "";
+            
+            switch (state_copy) {
+                case STATE_IDLE:
+                    line1 = "[IDLE]";
+                    line2 = "Awaiting Cmd...";
+                    break;
+                case STATE_WALK_FWD:
+                    line1 = "[MOVING]";
+                    line2 = "Walking Forward";
+                    break;
+                case STATE_WALK_BWD:
+                    line1 = "[MOVING]";
+                    line2 = "Walking Back";
+                    break;
+                case STATE_TURN_LEFT:
+                    line1 = "[TURNING]";
+                    line2 = "Turning Left";
+                    break;
+                case STATE_TURN_RIGHT:
+                    line1 = "[TURNING]";
+                    line2 = "Turning Right";
+                    break;
+                case STATE_OBSTACLE_AVOID:
+                    line1 = "[OBSTACLE!]";
+                    line2 = "Avoiding...";
+                    break;
+                case STATE_EMERGENCY_STOP:
+                    line1 = "!EMERGENCY!";
+                    line2 = "STOPPED";
+                    break;
+                default:
+                    line1 = "[UNKNOWN]";
+                    line2 = "State Error";
+                    break;
+            }
+            
+            update_lcd_status_safe(line1, line2);
+        }
+    }
+}
+
+/**
  * @brief WiFi Task - Connects to WiFi and starts TCP server
  */
 void vWifiTask(void* pvParameters) {
@@ -1487,11 +1558,22 @@ void process_command(const char* cmd) {
         printf("\n");
         printf("CALIBRATION COMMANDS:\n");
         printf("  SET_HOME               Set current position as neutral\n");
+        printf("  RESET_HOME             Reset to factory default positions\n");
         printf("  GET_CAL / CALIBRATION  Show current calibration values\n");
         printf("  SAVE                   Save calibration to flash\n");
         printf("  LOAD                   Load saved calibration\n");
         printf("  CAL_IMU                Calibrate IMU (keep robot still!)\n");
         printf("  RESET_IMU              Reset IMU orientation\n");
+        printf("\n");
+        printf("HOME POSITION COMMANDS (set all 4 legs at once):\n");
+        printf("  HOME_SHOULDERS_FR_FL_RR_RL  Set all shoulder home angles\n");
+        printf("                              (e.g., HOME_SHOULDERS_60_120_120_60)\n");
+        printf("  HOME_ELBOWS_FR_FL_RR_RL     Set all elbow home angles\n");
+        printf("                              (e.g., HOME_ELBOWS_90_90_90_90)\n");
+        printf("  HOME_WRISTS_FR_FL_RR_RL     Set all wrist home angles\n");
+        printf("                              (e.g., HOME_WRISTS_50_130_50_130)\n");
+        printf("\n");
+        printf("INDIVIDUAL SERVO CALIBRATION:\n");
         printf("  SH_XX <angle>          Calibrate shoulder (SH_FR, SH_FL, SH_RR, SH_RL)\n");
         printf("  EL_XX <angle>          Calibrate elbow (EL_FR, EL_FL, EL_RR, EL_RL)\n");
         printf("  WR_XX <angle>          Calibrate wrist (WR_FR, WR_FL, WR_RR, WR_RL)\n");
@@ -1530,12 +1612,94 @@ void process_command(const char* cmd) {
         update_lcd_status_safe("Home Set", "Save to keep");
         tcp_send_status("HOME_SET");
     }
+    // HOME_SHOULDERS_X_X_X_X - Set all shoulder home positions (FR,FL,RR,RL)
+    else if (strncmp(cmd_upper, "HOME_SHOULDERS_", 15) == 0) {
+        int fr, fl, rr, rl;
+        if (sscanf(&cmd_upper[15], "%d_%d_%d_%d", &fr, &fl, &rr, &rl) == 4) {
+            if (fr >= 0 && fr <= 180 && fl >= 0 && fl <= 180 && 
+                rr >= 0 && rr <= 180 && rl >= 0 && rl <= 180) {
+                calibrated_shoulder[0] = fr;
+                calibrated_shoulder[1] = fl;
+                calibrated_shoulder[2] = rr;
+                calibrated_shoulder[3] = rl;
+                printf("[CMD] Shoulder home set: FR=%d, FL=%d, RR=%d, RL=%d\n", fr, fl, rr, rl);
+                update_lcd_status_safe("Shoulders", "Home Set");
+                tcp_send_status("SHOULDERS_HOME_SET");
+            } else {
+                printf("[ERROR] Angles must be 0-180\n");
+            }
+        } else {
+            printf("[ERROR] Format: HOME_SHOULDERS_FR_FL_RR_RL (e.g., HOME_SHOULDERS_60_120_120_60)\n");
+        }
+    }
+    // HOME_ELBOWS_X_X_X_X - Set all elbow home positions (FR,FL,RR,RL)
+    else if (strncmp(cmd_upper, "HOME_ELBOWS_", 12) == 0) {
+        int fr, fl, rr, rl;
+        if (sscanf(&cmd_upper[12], "%d_%d_%d_%d", &fr, &fl, &rr, &rl) == 4) {
+            if (fr >= 0 && fr <= 180 && fl >= 0 && fl <= 180 && 
+                rr >= 0 && rr <= 180 && rl >= 0 && rl <= 180) {
+                calibrated_elbow[0] = fr;
+                calibrated_elbow[1] = fl;
+                calibrated_elbow[2] = rr;
+                calibrated_elbow[3] = rl;
+                printf("[CMD] Elbow home set: FR=%d, FL=%d, RR=%d, RL=%d\n", fr, fl, rr, rl);
+                update_lcd_status_safe("Elbows", "Home Set");
+                tcp_send_status("ELBOWS_HOME_SET");
+            } else {
+                printf("[ERROR] Angles must be 0-180\n");
+            }
+        } else {
+            printf("[ERROR] Format: HOME_ELBOWS_FR_FL_RR_RL (e.g., HOME_ELBOWS_90_90_90_90)\n");
+        }
+    }
+    // HOME_WRISTS_X_X_X_X - Set all wrist home positions (FR,FL,RR,RL)
+    else if (strncmp(cmd_upper, "HOME_WRISTS_", 12) == 0) {
+        int fr, fl, rr, rl;
+        if (sscanf(&cmd_upper[12], "%d_%d_%d_%d", &fr, &fl, &rr, &rl) == 4) {
+            if (fr >= 0 && fr <= 180 && fl >= 0 && fl <= 180 && 
+                rr >= 0 && rr <= 180 && rl >= 0 && rl <= 180) {
+                calibrated_wrist[0] = fr;
+                calibrated_wrist[1] = fl;
+                calibrated_wrist[2] = rr;
+                calibrated_wrist[3] = rl;
+                printf("[CMD] Wrist home set: FR=%d, FL=%d, RR=%d, RL=%d\n", fr, fl, rr, rl);
+                update_lcd_status_safe("Wrists", "Home Set");
+                tcp_send_status("WRISTS_HOME_SET");
+            } else {
+                printf("[ERROR] Angles must be 0-180\n");
+            }
+        } else {
+            printf("[ERROR] Format: HOME_WRISTS_FR_FL_RR_RL (e.g., HOME_WRISTS_50_130_50_130)\n");
+        }
+    }
+    // RESET_HOME - Reset all home positions to factory defaults
+    else if (strcmp(cmd_upper, "RESET_HOME") == 0) {
+        calibrated_shoulder[0] = DEFAULT_SHOULDER_ANGLES[0];
+        calibrated_shoulder[1] = DEFAULT_SHOULDER_ANGLES[1];
+        calibrated_shoulder[2] = DEFAULT_SHOULDER_ANGLES[2];
+        calibrated_shoulder[3] = DEFAULT_SHOULDER_ANGLES[3];
+        calibrated_elbow[0] = DEFAULT_ELBOW_ANGLES[0];
+        calibrated_elbow[1] = DEFAULT_ELBOW_ANGLES[1];
+        calibrated_elbow[2] = DEFAULT_ELBOW_ANGLES[2];
+        calibrated_elbow[3] = DEFAULT_ELBOW_ANGLES[3];
+        calibrated_wrist[0] = DEFAULT_WRIST_ANGLES[0];
+        calibrated_wrist[1] = DEFAULT_WRIST_ANGLES[1];
+        calibrated_wrist[2] = DEFAULT_WRIST_ANGLES[2];
+        calibrated_wrist[3] = DEFAULT_WRIST_ANGLES[3];
+        printf("[CMD] Home positions reset to factory defaults\n");
+        printf("Shoulders: [%d, %d, %d, %d]\n", calibrated_shoulder[0], calibrated_shoulder[1], calibrated_shoulder[2], calibrated_shoulder[3]);
+        printf("Elbows: [%d, %d, %d, %d]\n", calibrated_elbow[0], calibrated_elbow[1], calibrated_elbow[2], calibrated_elbow[3]);
+        printf("Wrists: [%d, %d, %d, %d]\n", calibrated_wrist[0], calibrated_wrist[1], calibrated_wrist[2], calibrated_wrist[3]);
+        update_lcd_status_safe("Home Reset", "Factory Def");
+        tcp_send_status("HOME_RESET");
+    }
     // Get current calibration values
     else if (strcmp(cmd_upper, "GET_CAL") == 0 || strcmp(cmd_upper, "CALIBRATION") == 0) {
         printf("\n=== Calibration Values ===\n");
         printf("Shoulders: [%d, %d, %d, %d]\n", calibrated_shoulder[0], calibrated_shoulder[1], calibrated_shoulder[2], calibrated_shoulder[3]);
         printf("Elbows: [%d, %d, %d, %d]\n", calibrated_elbow[0], calibrated_elbow[1], calibrated_elbow[2], calibrated_elbow[3]);
         printf("Wrists: [%d, %d, %d, %d]\n", calibrated_wrist[0], calibrated_wrist[1], calibrated_wrist[2], calibrated_wrist[3]);
+        update_lcd_status_safe("Calibration", "Shown");
     }
     // =========================================================================
     // SHOULDER CALIBRATION: SH_FR, SH_FL, SH_RR, SH_RL <angle>
@@ -1846,9 +2010,10 @@ int main() {
             printf("  [DEBUG] lcd_init returned true\n");
             fflush(stdout);
             lcd_backlight_on(&lcd);
+            lcd_clear(&lcd);
             lcd_print(&lcd, "SpotMicro v2.0");
             lcd_set_cursor(&lcd, 0, 1);
-            lcd_print(&lcd, "Booting...");
+            lcd_print(&lcd, "[BOOTING...]");
             printf("[OK] LCD initialized\n");
         } else {
             printf("  [DEBUG] lcd_init returned false\n");
@@ -1861,6 +2026,10 @@ int main() {
     // Initialize PCA9685
     printf("[BOOT] Initializing PCA9685...\n");
     fflush(stdout);
+    if (lcd_ok) {
+        lcd_set_cursor(&lcd, 0, 1);
+        lcd_print(&lcd, "Init Servos...  ");
+    }
     if (pca_ok) {
         if (!pca9685_init(&pca, I2C_PORT, I2C_SDA_PIN, I2C_SCL_PIN, PCA_ADDR)) {
             printf("[ERROR] PCA9685 init failed!\n");
@@ -1890,6 +2059,10 @@ int main() {
     // Load Settings
     printf("[BOOT] Loading settings from flash...\n");
     fflush(stdout);
+    if (lcd_ok) {
+        lcd_set_cursor(&lcd, 0, 1);
+        lcd_print(&lcd, "Load Settings...");
+    }
     if (!load_settings_from_flash()) {
         printf("  [DEBUG] Using default calibration\n");
         for(int i = 0; i < 4; i++) {
@@ -1980,15 +2153,19 @@ int main() {
     fflush(stdout);
     xTaskCreate(vWifiTask,       "WiFi",      2048, NULL, 2, NULL);
     
-    printf("[OK] All 8 tasks created\n");
+    printf("  [DEBUG] Creating LCD Status task...\n");
+    fflush(stdout);
+    xTaskCreate(vLcdStatusTask,  "LcdStatus", 512,  NULL, 1, NULL);
+    
+    printf("[OK] All 9 tasks created\n");
     fflush(stdout);
     
-    // Update LCD
+    // Update LCD - Ready to start
     if (lcd_ok) {
         lcd_clear(&lcd);
-        lcd_print(&lcd, "SpotMicro Ready");
+        lcd_print(&lcd, "[READY]");
         lcd_set_cursor(&lcd, 0, 1);
-        lcd_print(&lcd, "Type HELP");
+        lcd_print(&lcd, "Waiting WiFi...");
     }
     
     // Start Scheduler
