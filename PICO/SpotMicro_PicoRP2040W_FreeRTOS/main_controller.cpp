@@ -901,21 +901,48 @@ void vWifiTask(void* pvParameters) {
     if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, 
                                            CYW43_AUTH_WPA2_AES_PSK, 30000) == 0) {
         wifi_connected = true;
-        const char* ip = ip4addr_ntoa(netif_ip4_addr(netif_list));
-        printf("[WIFI] Connected! IP: %s\n", ip);
+        
+        // Wait a moment for DHCP to complete
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        
+        // Get the Pico's IP address from the network interface
+        struct netif *netif = netif_list;
+        while (netif != NULL) {
+            if (netif_is_up(netif) && !ip4_addr_isany_val(*netif_ip4_addr(netif))) {
+                break;
+            }
+            netif = netif->next;
+        }
+        
+        if (netif == NULL) {
+            netif = netif_list;  // Fallback to first interface
+        }
+        
+        const ip4_addr_t* pico_ip = netif_ip4_addr(netif);
+        const ip4_addr_t* gateway = netif_ip4_gw(netif);
+        
+        char ip_str[16];
+        char gw_str[16];
+        snprintf(ip_str, sizeof(ip_str), "%s", ip4addr_ntoa(pico_ip));
+        snprintf(gw_str, sizeof(gw_str), "%s", ip4addr_ntoa(gateway));
+        
+        printf("[WIFI] Connected!\n");
+        printf("[WIFI] Pico IP: %s\n", ip_str);
+        printf("[WIFI] Gateway: %s\n", gw_str);
+        fflush(stdout);
         
         char lcd_ip[17];
-        snprintf(lcd_ip, sizeof(lcd_ip), "IP:%s", ip);
+        snprintf(lcd_ip, sizeof(lcd_ip), "%s", ip_str);
         update_lcd_status_safe("WiFi OK", lcd_ip);
         
         // Start TCP server for web interface
         vTaskDelay(pdMS_TO_TICKS(500));
         if (tcp_server_start()) {
-            printf("[WIFI] Web interface ready at http://%s:%d\n", ip, TCP_PORT);
+            printf("[WIFI] Web interface ready at http://%s:%d\n", ip_str, TCP_PORT);
             
-            char lcd_port[17];
-            snprintf(lcd_port, sizeof(lcd_port), "Port:%d", TCP_PORT);
-            update_lcd_status_safe(lcd_ip, lcd_port);
+            char lcd_line2[17];
+            snprintf(lcd_line2, sizeof(lcd_line2), "Port:%d", TCP_PORT);
+            update_lcd_status_safe(lcd_ip, lcd_line2);
         }
     } else {
         printf("[WIFI] Failed to connect\n");
@@ -925,6 +952,17 @@ void vWifiTask(void* pvParameters) {
     
     // Monitor connection status
     for (;;) {
+        // Check if WiFi link is still up
+        int link_status = cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA);
+        
+        if (link_status != CYW43_LINK_UP) {
+            if (wifi_connected) {
+                printf("[WIFI] Connection lost! Status: %d\n", link_status);
+                wifi_connected = false;
+                update_lcd_status_safe("WiFi LOST", "Reconnecting...");
+            }
+        }
+        
         if (!wifi_connected) {
             // Try to reconnect every 30 seconds
             static int reconnect_counter = 0;
@@ -935,7 +973,9 @@ void vWifiTask(void* pvParameters) {
                 if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, 
                                                        CYW43_AUTH_WPA2_AES_PSK, 10000) == 0) {
                     wifi_connected = true;
-                    printf("[WIFI] Reconnected!\n");
+                    const char* ip = ip4addr_ntoa(netif_ip4_addr(netif_list));
+                    printf("[WIFI] Reconnected! IP: %s\n", ip);
+                    update_lcd_status_safe("WiFi OK", ip);
                     tcp_server_start();
                 }
             }
