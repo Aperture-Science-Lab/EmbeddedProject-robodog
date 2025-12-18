@@ -412,7 +412,27 @@ static err_t tcp_recv_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, 
     
     if (strlen(cmd_buffer) > 0) {
         printf("[TCP] Received: %s\n", cmd_buffer);
-        process_command(cmd_buffer);
+        fflush(stdout);
+        
+        // Queue command for processing by vCommsTask (safer than direct call)
+        // Allocate memory for command string
+        char* cmd_copy = (char*)pvPortMalloc(strlen(cmd_buffer) + 1);
+        if (cmd_copy) {
+            strcpy(cmd_copy, cmd_buffer);
+            // Send to queue - use short timeout, don't block forever
+            if (xQueueSend(cmd_queue, &cmd_copy, pdMS_TO_TICKS(10)) != pdTRUE) {
+                // Queue full, free memory and process directly as fallback
+                printf("[TCP] Queue full, processing directly\n");
+                vPortFree(cmd_copy);
+                process_command(cmd_buffer);
+            } else {
+                printf("[TCP] Command queued: %s\n", cmd_buffer);
+            }
+        } else {
+            // Memory allocation failed, process directly
+            printf("[TCP] Malloc failed, processing directly\n");
+            process_command(cmd_buffer);
+        }
     }
     
     // Acknowledge received data
@@ -741,8 +761,12 @@ void vCommsTask(void* pvParameters) {
         char* tcp_msg = NULL;
         if (xQueueReceive(cmd_queue, &tcp_msg, 0) == pdTRUE) {
             if (tcp_msg) {
-                printf("[CMD] From web client: %s\n", tcp_msg);
+                printf("\n[WEB] Processing command: %s\n", tcp_msg);
+                fflush(stdout);
                 process_command(tcp_msg);
+                printf("[WEB] Command done: %s\n", tcp_msg);
+                printf("Ready> ");
+                fflush(stdout);
                 vPortFree(tcp_msg);
             }
         }
