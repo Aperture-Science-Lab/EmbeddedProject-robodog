@@ -37,6 +37,7 @@
 
 // Pico SDK & CYW43 for WiFi
 #include "pico/stdlib.h"
+#include "pico/stdio_usb.h"
 #include "pico/cyw43_arch.h"
 #include "hardware/flash.h"
 #include "hardware/sync.h"
@@ -974,9 +975,17 @@ void process_command(const char* cmd) {
 // MAIN
 // ============================================================================
 int main() {
-    // Initialize stdio (USB)
+    // Initialize stdio (USB) - MUST be first for Pico W
     stdio_init_all();
-    sleep_ms(2000);  // Wait for USB serial
+    
+    // Wait for USB to enumerate (important for serial monitor)
+    // This gives the host computer time to recognize the USB device
+    for (int i = 0; i < 30; i++) {
+        sleep_ms(100);
+        // Check if USB is connected
+        if (stdio_usb_connected()) break;
+    }
+    sleep_ms(500);  // Extra delay for stability
     
     printf("\n");
     printf("╔═══════════════════════════════════════════════════════════════╗\n");
