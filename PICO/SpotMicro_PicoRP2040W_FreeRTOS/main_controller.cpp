@@ -1005,21 +1005,40 @@ int main() {
     cyw43_arch_enable_sta_mode();
     printf("[OK] CYW43 initialized\n");
     fflush(stdout);
+    sleep_ms(100);  // Small delay for buffer flush
     
     // Create FreeRTOS Objects
     printf("[BOOT] Creating RTOS objects...\n");
     fflush(stdout);
+    sleep_ms(50);
+    
+    printf("  [DEBUG] About to create i2c_mutex...\n");
+    fflush(stdout);
+    sleep_ms(10);
+    
     i2c_mutex = xSemaphoreCreateRecursiveMutex();
+    
     printf("  [DEBUG] i2c_mutex created: %s\n", i2c_mutex ? "OK" : "FAIL");
     fflush(stdout);
+    sleep_ms(10);
+    
+    printf("  [DEBUG] About to create state_mutex...\n");
+    fflush(stdout);
+    sleep_ms(10);
     
     state_mutex = xSemaphoreCreateMutex();
     printf("  [DEBUG] state_mutex created: %s\n", state_mutex ? "OK" : "FAIL");
     fflush(stdout);
+    sleep_ms(10);
+    
+    printf("  [DEBUG] About to create cmd_queue...\n");
+    fflush(stdout);
+    sleep_ms(10);
     
     cmd_queue = xQueueCreate(10, sizeof(char*));
     printf("  [DEBUG] cmd_queue created: %s\n", cmd_queue ? "OK" : "FAIL");
     fflush(stdout);
+    sleep_ms(10);
     
     if (!i2c_mutex || !state_mutex || !cmd_queue) {
         printf("[ERROR] Failed to create RTOS objects\n");

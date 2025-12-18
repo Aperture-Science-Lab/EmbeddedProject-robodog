@@ -38,10 +38,11 @@
 #define configAPPLICATION_ALLOCATED_HEAP        0
 
 /* SMP Configuration for RP2040 Dual Core */
-#define configNUMBER_OF_CORES                   2
+/* Using single core for stability - can enable dual core later */
+#define configNUMBER_OF_CORES                   1
 #define configTICK_CORE                         0
-#define configRUN_MULTIPLE_PRIORITIES           1
-#define configUSE_CORE_AFFINITY                 1
+#define configRUN_MULTIPLE_PRIORITIES           0
+#define configUSE_CORE_AFFINITY                 0
 
 /* Hook Functions */
 #define configUSE_IDLE_HOOK                     0
