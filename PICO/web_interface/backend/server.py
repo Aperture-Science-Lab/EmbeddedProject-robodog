@@ -519,6 +519,9 @@ def gen_frames(src, is_stereo_feed=False):
 @app.get("/api/status")
 def get_status():
     """Get full robot status including TCP connection and telemetry"""
+    # Debug: print telemetry occasionally
+    # if robot.pico_telemetry.get("state") != "UNKNOWN":
+    #     print(f"[STATUS] Telemetry state: {robot.pico_telemetry.get('state')}")
     return {
         "serial_connected": robot.serial_connected,
         "tcp_connected": robot.tcp_connected,

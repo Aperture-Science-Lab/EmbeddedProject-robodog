@@ -40,7 +40,17 @@
 // ============================================================================
 // WiFi Credentials - UPDATE THESE WITH YOUR HOTSPOT INFO!
 // ============================================================================
-#define WIFI_SSID       "YourHotspotName"    // Your Mobile Hotspot name
-#define WIFI_PASSWORD   "YourPassword"        // Your Mobile Hotspot password
+// IMPORTANT: Change these to match YOUR Windows Mobile Hotspot settings!
+// Go to Windows Settings > Network & Internet > Mobile hotspot to find them
+// 
+// Example: If your hotspot shows:
+//   Network name: DESKTOP-ABC123
+//   Password: mypassword123
+// Then set:
+//   WIFI_SSID "DESKTOP-ABC123"
+//   WIFI_PASSWORD "mypassword123"
+//
+#define WIFI_SSID       "CHANGE_ME"           // <-- PUT YOUR HOTSPOT NAME HERE
+#define WIFI_PASSWORD   "CHANGE_ME"           // <-- PUT YOUR HOTSPOT PASSWORD HERE
 
 #endif // WIFI_CONFIG_H
