@@ -371,22 +371,18 @@ void tcp_send_status(const char* status) {
 }
 
 /**
+ * @brief Remove client from tracking list (forward declare)
+ */
+static void tcp_remove_client(struct tcp_pcb *pcb);
+
+/**
  * @brief TCP receive callback - processes commands from web clients
  */
 static err_t tcp_recv_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
     if (p == NULL) {
         // Connection closed by client
         printf("[TCP] Client disconnected\n");
-        
-        // Remove from client list
-        for (int i = 0; i < TCP_MAX_CLIENTS; i++) {
-            if (tcp_clients[i] == tpcb) {
-                tcp_clients[i] = NULL;
-                tcp_client_count--;
-                break;
-            }
-        }
-        
+        tcp_remove_client(tpcb);
         tcp_close(tpcb);
         return ERR_OK;
     }
@@ -443,10 +439,32 @@ static err_t tcp_recv_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, 
 }
 
 /**
+ * @brief Remove client from tracking list
+ */
+static void tcp_remove_client(struct tcp_pcb *pcb) {
+    for (int i = 0; i < TCP_MAX_CLIENTS; i++) {
+        if (tcp_clients[i] == pcb) {
+            tcp_clients[i] = NULL;
+            if (tcp_client_count > 0) tcp_client_count--;
+            printf("[TCP] Client removed (slot %d, remaining: %d)\n", i, tcp_client_count);
+            break;
+        }
+    }
+}
+
+/**
  * @brief TCP error callback
  */
 static void tcp_error_callback(void *arg, err_t err) {
-    printf("[TCP] Error: %d\n", err);
+    int slot = (int)(intptr_t)arg;
+    printf("[TCP] Error callback: err=%d, slot=%d\n", err, slot);
+    
+    // Clean up the client slot
+    if (slot >= 0 && slot < TCP_MAX_CLIENTS) {
+        tcp_clients[slot] = NULL;
+        if (tcp_client_count > 0) tcp_client_count--;
+        printf("[TCP] Client error removed (slot %d, remaining: %d)\n", slot, tcp_client_count);
+    }
 }
 
 /**
@@ -476,10 +494,14 @@ static err_t tcp_accept_callback(void *arg, struct tcp_pcb *newpcb, err_t err) {
     tcp_client_count++;
     
     printf("[TCP] Client connected (slot %d, total: %d)\n", slot, tcp_client_count);
+    fflush(stdout);
     
     // Set callbacks
     tcp_recv(newpcb, tcp_recv_callback);
     tcp_err(newpcb, tcp_error_callback);
+    
+    // Store slot index in arg for error callback cleanup
+    tcp_arg(newpcb, (void*)(intptr_t)slot);
     
     // Send welcome message with IP info
     char welcome[128];
@@ -990,6 +1012,9 @@ void vWifiTask(void* pvParameters) {
 
 void process_command(const char* cmd) {
     if (!cmd || strlen(cmd) == 0) return;
+    
+    printf("[PROCESS] Command received: '%s'\n", cmd);
+    fflush(stdout);
     
     // Make uppercase copy
     char cmd_upper[64];

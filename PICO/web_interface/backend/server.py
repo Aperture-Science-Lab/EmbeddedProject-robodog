@@ -102,11 +102,18 @@ def tcp_connect_pico(ip: str, port: int = 8080):
             try:
                 robot.tcp_socket.close()
             except: pass
+            robot.tcp_socket = None
             
         robot.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        robot.tcp_socket.settimeout(5.0)
+        robot.tcp_socket.settimeout(10.0)  # Longer connection timeout
         robot.tcp_socket.connect((ip, port))
-        robot.tcp_socket.settimeout(0.1)  # Non-blocking reads
+        
+        # Enable TCP keepalive to detect disconnections
+        robot.tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        
+        # Set read timeout (longer to avoid spurious disconnects)
+        robot.tcp_socket.settimeout(1.0)
+        
         robot.tcp_connected = True
         robot.pico_ip = ip
         print(f"[TCP] Connected to Pico at {ip}:{port}")
@@ -117,11 +124,15 @@ def tcp_connect_pico(ip: str, port: int = 8080):
     except Exception as e:
         print(f"[TCP] Failed to connect to {ip}:{port}: {e}")
         robot.tcp_connected = False
+        robot.tcp_socket = None
         return False
 
 def tcp_listener():
     """Reads data from Pico TCP connection"""
     buffer = ""
+    consecutive_timeouts = 0
+    max_timeouts = 30  # Allow up to 30 seconds of no data before disconnect
+    
     while robot.tcp_connected and robot.tcp_socket:
         try:
             data = robot.tcp_socket.recv(1024)
@@ -129,7 +140,9 @@ def tcp_listener():
                 print("[TCP] Connection closed by Pico")
                 robot.tcp_connected = False
                 break
-                
+            
+            # Reset timeout counter on successful receive
+            consecutive_timeouts = 0
             buffer += data.decode('utf-8', errors='ignore')
             
             # Process complete JSON lines
@@ -144,25 +157,43 @@ def tcp_listener():
                             # Also update EKF state for compatibility
                             imu = telemetry.get("imu", {})
                             robot.latest_ekf_state["imu"] = imu
+                            # Debug: print when we get telemetry
+                            # print(f"[TCP] Got telemetry: state={telemetry.get('state')}")
                         elif "status" in telemetry:
                             print(f"[PICO] Status: {telemetry['status']}")
-                    except json.JSONDecodeError:
-                        pass
+                    except json.JSONDecodeError as e:
+                        print(f"[TCP] JSON decode error: {e}")
         except socket.timeout:
-            pass
+            consecutive_timeouts += 1
+            if consecutive_timeouts >= max_timeouts:
+                print(f"[TCP] No data for {max_timeouts} seconds, assuming disconnected")
+                robot.tcp_connected = False
+                break
+            # Don't flood the console with timeout messages
+            continue
+        except ConnectionResetError:
+            print("[TCP] Connection reset by Pico")
+            robot.tcp_connected = False
+            break
         except Exception as e:
             print(f"[TCP] Read error: {e}")
             robot.tcp_connected = False
             break
         time.sleep(0.01)
+    
+    # Cleanup
+    print("[TCP] Listener thread exiting")
+    robot.tcp_connected = False
 
 def tcp_send_command(cmd: str):
     """Send command to Pico via TCP"""
     if not robot.tcp_connected or not robot.tcp_socket:
+        print(f"[TCP] Cannot send '{cmd}' - not connected")
         return False
     try:
         with robot.tcp_lock:
             robot.tcp_socket.sendall((cmd + "\n").encode())
+            print(f"[TCP] Sent: {cmd}")
         return True
     except Exception as e:
         print(f"[TCP] Send error: {e}")
