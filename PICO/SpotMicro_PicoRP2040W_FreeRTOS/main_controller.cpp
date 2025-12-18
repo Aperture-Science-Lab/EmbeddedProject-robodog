@@ -340,7 +340,7 @@ void tcp_send_sensors(void) {
         state_str,
         head_current_angle, head_swing_enabled ? "true" : "false",
         g_sensors.imu.roll, g_sensors.imu.pitch, g_sensors.imu.yaw,
-        g_sensors.imu.ax, g_sensors.imu.ay, g_sensors.imu.az,
+        g_sensors.imu.accel_x, g_sensors.imu.accel_y, g_sensors.imu.accel_z,
         g_sensors.ir_front.blocked ? "true" : "false",
         g_sensors.ir_back.blocked ? "true" : "false",
         g_sensors.pir_front.motion_detected ? "true" : "false",
@@ -710,8 +710,10 @@ void vCommsTask(void* pvParameters) {
     char input_buffer[64];
     int input_pos = 0;
     
-    printf("\n=== SpotMicro Ready ===\n");
-    printf("Commands: WALK, BACK, STOP, LEFT, RIGHT, SENSORS, HEAD_ON, HEAD_OFF, HELP\n");
+    printf("\n=== SpotMicro FreeRTOS Ready ===\n");
+    printf("Quick keys: W=Walk, B=Back, S=Stop, A/L=Left, D/R=Right, N=Stand, T=Tail\n");
+    printf("Commands: WALK, BACK, STOP, LEFT, RIGHT, SENSORS, START, HELP\n");
+    printf("Type HELP or ? for full command list\n");
     printf("Ready> ");
     fflush(stdout);
     
@@ -899,6 +901,40 @@ void process_command(const char* cmd) {
         update_lcd_status_safe("Turning", "Right");
         tcp_send_status("TURNING_RIGHT");
     }
+    // TURN_LEFT_X - Turn left by X degrees (e.g., TURN_LEFT_30)
+    else if (strncmp(cmd_upper, "TURN_LEFT_", 10) == 0) {
+        int angle = atoi(&cmd_upper[10]);
+        if (angle > 0 && angle <= 180) {
+            turn_angle = (float)angle;
+            current_state = STATE_TURN_LEFT;
+            printf("[CMD] Turning left %d°\n", angle);
+            char lcd_buf[16];
+            snprintf(lcd_buf, sizeof(lcd_buf), "Left %d deg", angle);
+            update_lcd_status_safe("Turning", lcd_buf);
+            char status_buf[32];
+            snprintf(status_buf, sizeof(status_buf), "TURN_LEFT_%d", angle);
+            tcp_send_status(status_buf);
+        } else {
+            printf("[ERROR] Invalid turn angle. Use 1-180.\n");
+        }
+    }
+    // TURN_RIGHT_X - Turn right by X degrees (e.g., TURN_RIGHT_45)
+    else if (strncmp(cmd_upper, "TURN_RIGHT_", 11) == 0) {
+        int angle = atoi(&cmd_upper[11]);
+        if (angle > 0 && angle <= 180) {
+            turn_angle = (float)angle;
+            current_state = STATE_TURN_RIGHT;
+            printf("[CMD] Turning right %d°\n", angle);
+            char lcd_buf[16];
+            snprintf(lcd_buf, sizeof(lcd_buf), "Right %d deg", angle);
+            update_lcd_status_safe("Turning", lcd_buf);
+            char status_buf[32];
+            snprintf(status_buf, sizeof(status_buf), "TURN_RIGHT_%d", angle);
+            tcp_send_status(status_buf);
+        } else {
+            printf("[ERROR] Invalid turn angle. Use 1-180.\n");
+        }
+    }
     // Emergency Stop
     else if (strcmp(cmd_upper, "ESTOP") == 0 || strcmp(cmd_upper, "EMERGENCY") == 0) {
         current_state = STATE_EMERGENCY_STOP;
@@ -936,13 +972,111 @@ void process_command(const char* cmd) {
     else if (strcmp(cmd_upper, "HEAD_CENTER") == 0) {
         head_swing_enabled = false;
         head_target_angle = HEAD_CENTER;
+        head_current_angle = HEAD_CENTER;
         set_servo_safe(HEAD_SERVO_CH, head_target_angle);
         printf("[CMD] Head center\n");
+        tcp_send_status("HEAD_CENTER");
     }
-    // Sensor Commands
+    // HEAD_STOP - Stop head servo (disable swing and hold position)
+    else if (strcmp(cmd_upper, "HEAD_STOP") == 0) {
+        head_swing_enabled = false;
+        printf("[CMD] Head servo stopped at %.1f°\n", head_current_angle);
+        tcp_send_status("HEAD_STOPPED");
+    }
+    // HEAD_ANGLE_X - Set head to specific angle (e.g., HEAD_ANGLE_90)
+    else if (strncmp(cmd_upper, "HEAD_ANGLE_", 11) == 0) {
+        int angle = atoi(&cmd_upper[11]);
+        if (angle >= (int)HEAD_MIN_ANGLE && angle <= (int)HEAD_MAX_ANGLE) {
+            head_swing_enabled = false;
+            head_target_angle = (float)angle;
+            head_current_angle = (float)angle;
+            set_servo_safe(HEAD_SERVO_CH, head_target_angle);
+            printf("[CMD] Head set to %d°\n", angle);
+            char status_buf[32];
+            snprintf(status_buf, sizeof(status_buf), "HEAD_ANGLE_%d", angle);
+            tcp_send_status(status_buf);
+        } else {
+            printf("[ERROR] Invalid head angle. Use %d-%d.\n", (int)HEAD_MIN_ANGLE, (int)HEAD_MAX_ANGLE);
+        }
+    }
+    // HEAD_ACTIVATE / HEAD_START - Activate head servo swing
+    else if (strcmp(cmd_upper, "HEAD_ACTIVATE") == 0 || strcmp(cmd_upper, "HEAD_START") == 0) {
+        head_swing_enabled = true;
+        printf("[CMD] Head servo activated (swing mode)\n");
+        tcp_send_status("HEAD_ACTIVATED");
+    }
+    // Sensor Commands - Comprehensive sensor display
     else if (strcmp(cmd_upper, "SENSORS") == 0 || strcmp(cmd_upper, "SENSOR") == 0) {
         xSemaphoreGive(state_mutex);
-        sensor_hub_print_status();
+        printf("\n");
+        printf("╔═══════════════════════════════════════════════════╗\n");
+        printf("║   Sensor Hub Status (All Sensors)                 ║\n");
+        printf("╚═══════════════════════════════════════════════════╝\n");
+        printf("\n");
+        
+        // Ultrasonic Sensors
+        printf("┌─── ULTRASONIC SENSORS ────────────────────────────┐\n");
+        printf("│  Left:  %.1f cm    Right: %.1f cm                 \n",
+               g_sensors.us_left.distance_cm, g_sensors.us_right.distance_cm);
+        printf("└───────────────────────────────────────────────────┘\n");
+        printf("\n");
+        
+        // IMU (from Nano)
+        printf("┌─── IMU (Nano RP2040) ────────────────────────────┐\n");
+        printf("│  Roll:  %.2f°   Pitch: %.2f°   Yaw: %.2f°        \n",
+               g_sensors.imu.roll, g_sensors.imu.pitch, g_sensors.imu.yaw);
+        printf("│  Accel: X=%.3f  Y=%.3f  Z=%.3f (g)              \n",
+               g_sensors.imu.accel_x, g_sensors.imu.accel_y, g_sensors.imu.accel_z);
+        printf("│  Status: %s                                       \n",
+               g_sensors.imu.imu_ok ? "OK" : "Error");
+        printf("└───────────────────────────────────────────────────┘\n");
+        printf("\n");
+        
+        // GPS (from Nano)
+        printf("┌─── GPS ──────────────────────────────────────────┐\n");
+        printf("│  Fix: %s   Satellites: %d                        \n",
+               g_sensors.gps.fix_valid ? "Valid" : "No Fix", g_sensors.gps.satellites);
+        printf("│  Lat: %.6f   Lon: %.6f                         \n",
+               g_sensors.gps.latitude, g_sensors.gps.longitude);
+        printf("│  Altitude: %.1f m                                  \n",
+               g_sensors.gps.altitude);
+        printf("└───────────────────────────────────────────────────┘\n");
+        printf("\n");
+        
+        // IR Sensors (from Nano)
+        printf("┌─── IR OBSTACLE SENSORS ──────────────────────────┐\n");
+        printf("│  Front IR: %s    Back IR: %s                   \n",
+               g_sensors.ir_front.blocked ? "BLOCKED" : "Clear  ",
+               g_sensors.ir_back.blocked ? "BLOCKED" : "Clear  ");
+        printf("└───────────────────────────────────────────────────┘\n");
+        printf("\n");
+        
+        // PIR Motion Sensors (from Nano)
+        printf("┌─── PIR MOTION SENSORS ───────────────────────────┐\n");
+        printf("│  Front PIR: %s    Back PIR: %s                 \n",
+               g_sensors.pir_front.motion_detected ? "MOTION " : "No motion",
+               g_sensors.pir_back.motion_detected ? "MOTION " : "No motion");
+        printf("└───────────────────────────────────────────────────┘\n");
+        printf("\n");
+        
+        // LDR Light Sensor (from Nano)
+        printf("┌─── LDR LIGHT SENSOR ─────────────────────────────┐\n");
+        printf("│  Raw Value: %d    Light Level: %.1f%%             \n",
+               g_sensors.ldr.raw_value, g_sensors.ldr.light_percent);
+        printf("└───────────────────────────────────────────────────┘\n");
+        printf("\n");
+        
+        // Connection status
+        printf("┌─── CONNECTION STATUS ────────────────────────────┐\n");
+        printf("│  Nano RP2040: %s                                \n",
+               g_sensors.nano_connected ? "Connected" : "Disconnected");
+        printf("│  WiFi: %s   TCP Clients: %d                      \n",
+               wifi_connected ? "Connected" : "Disconnected", tcp_client_count);
+        printf("└───────────────────────────────────────────────────┘\n");
+        printf("\n");
+        
+        // Also print to connected clients
+        tcp_send_sensors();
         xSemaphoreTake(state_mutex, portMAX_DELAY);
     }
     else if (strcmp(cmd_upper, "IMU") == 0) {
@@ -969,6 +1103,34 @@ void process_command(const char* cmd) {
         printf("LDR: Raw=%d Light=%.1f%%\n",
                g_sensors.ldr.raw_value, g_sensors.ldr.light_percent);
     }
+    // US / ULTRASONIC - Show ultrasonic sensor data
+    else if (strcmp(cmd_upper, "US") == 0 || strcmp(cmd_upper, "ULTRASONIC") == 0) {
+        printf("Ultrasonic: Left=%.1f cm  Right=%.1f cm\n",
+               g_sensors.us_left.distance_cm, g_sensors.us_right.distance_cm);
+    }
+    // START - Alias for walk forward
+    else if (strcmp(cmd_upper, "START") == 0) {
+        current_state = STATE_WALK_FWD;
+        printf("[CMD] Start walking forward\n");
+        update_lcd_status_safe("Walking", "Forward");
+        tcp_send_status("WALKING_FORWARD");
+    }
+    // L - Quick turn left 15 degrees
+    else if (strcmp(cmd_upper, "L") == 0) {
+        turn_angle = 15.0f;
+        current_state = STATE_TURN_LEFT;
+        printf("[CMD] Turn left 15°\n");
+        update_lcd_status_safe("Turning", "Left 15");
+        tcp_send_status("TURN_LEFT_15");
+    }
+    // R - Quick turn right 15 degrees  
+    else if (strcmp(cmd_upper, "R") == 0) {
+        turn_angle = 15.0f;
+        current_state = STATE_TURN_RIGHT;
+        printf("[CMD] Turn right 15°\n");
+        update_lcd_status_safe("Turning", "Right 15");
+        tcp_send_status("TURN_RIGHT_15");
+    }
     // Calibration - Save
     else if (strcmp(cmd_upper, "SAVE") == 0) {
         xSemaphoreGive(state_mutex);
@@ -994,6 +1156,172 @@ void process_command(const char* cmd) {
         printf("[CMD] Neutral stance\n");
         update_lcd_status_safe("Standing", "Neutral");
         tcp_send_status("NEUTRAL");
+    }
+    // LOW - Crouch pose (lower body height)
+    else if (strcmp(cmd_upper, "LOW") == 0 || strcmp(cmd_upper, "CROUCH") == 0) {
+        current_state = STATE_IDLE;
+        printf("[CMD] Low crouch pose...\n");
+        // Lower = shoulders move towards center (FR/RL increase, FL/RR decrease)
+        xSemaphoreGive(state_mutex);
+        set_servo_safe(SHOULDER_CHANNELS[0], (float)(calibrated_shoulder[0] + 30)); // FR: +30
+        set_servo_safe(SHOULDER_CHANNELS[1], (float)(calibrated_shoulder[1] - 30)); // FL: -30
+        set_servo_safe(SHOULDER_CHANNELS[2], (float)(calibrated_shoulder[2] - 30)); // RR: -30
+        set_servo_safe(SHOULDER_CHANNELS[3], (float)(calibrated_shoulder[3] + 30)); // RL: +30
+        xSemaphoreTake(state_mutex, portMAX_DELAY);
+        update_lcd_status_safe("Pose: LOW", "Crouch");
+        tcp_send_status("POSE_LOW");
+    }
+    // HIGH - Extended pose (raise body height)
+    else if (strcmp(cmd_upper, "HIGH") == 0 || strcmp(cmd_upper, "EXTEND") == 0) {
+        current_state = STATE_IDLE;
+        printf("[CMD] High extend pose...\n");
+        // Higher = shoulders move away from center (FR/RL decrease, FL/RR increase)
+        xSemaphoreGive(state_mutex);
+        set_servo_safe(SHOULDER_CHANNELS[0], (float)(calibrated_shoulder[0] - 20)); // FR: -20
+        set_servo_safe(SHOULDER_CHANNELS[1], (float)(calibrated_shoulder[1] + 20)); // FL: +20
+        set_servo_safe(SHOULDER_CHANNELS[2], (float)(calibrated_shoulder[2] + 20)); // RR: +20
+        set_servo_safe(SHOULDER_CHANNELS[3], (float)(calibrated_shoulder[3] - 20)); // RL: -20
+        xSemaphoreTake(state_mutex, portMAX_DELAY);
+        update_lcd_status_safe("Pose: HIGH", "Extended");
+        tcp_send_status("POSE_HIGH");
+    }
+    // HEIGHT UP - Raise height by 5 degrees
+    else if (strcmp(cmd_upper, "UP") == 0 || strcmp(cmd_upper, "U") == 0 || strcmp(cmd_upper, "HEIGHT_UP") == 0) {
+        printf("[CMD] Raising height...\n");
+        xSemaphoreGive(state_mutex);
+        // Move away from center (FR/RL decrease, FL/RR increase)
+        set_servo_safe(SHOULDER_CHANNELS[0], last_servo_angles[SHOULDER_CHANNELS[0]] - 5);
+        set_servo_safe(SHOULDER_CHANNELS[1], last_servo_angles[SHOULDER_CHANNELS[1]] + 5);
+        set_servo_safe(SHOULDER_CHANNELS[2], last_servo_angles[SHOULDER_CHANNELS[2]] + 5);
+        set_servo_safe(SHOULDER_CHANNELS[3], last_servo_angles[SHOULDER_CHANNELS[3]] - 5);
+        xSemaphoreTake(state_mutex, portMAX_DELAY);
+        update_lcd_status_safe("Height", "Up +5");
+        tcp_send_status("HEIGHT_UP");
+    }
+    // HEIGHT DOWN - Lower height by 5 degrees
+    else if (strcmp(cmd_upper, "DOWN") == 0 || strcmp(cmd_upper, "HEIGHT_DOWN") == 0) {
+        printf("[CMD] Lowering height...\n");
+        xSemaphoreGive(state_mutex);
+        // Move towards center (FR/RL increase, FL/RR decrease)
+        set_servo_safe(SHOULDER_CHANNELS[0], last_servo_angles[SHOULDER_CHANNELS[0]] + 5);
+        set_servo_safe(SHOULDER_CHANNELS[1], last_servo_angles[SHOULDER_CHANNELS[1]] - 5);
+        set_servo_safe(SHOULDER_CHANNELS[2], last_servo_angles[SHOULDER_CHANNELS[2]] - 5);
+        set_servo_safe(SHOULDER_CHANNELS[3], last_servo_angles[SHOULDER_CHANNELS[3]] + 5);
+        xSemaphoreTake(state_mutex, portMAX_DELAY);
+        update_lcd_status_safe("Height", "Down -5");
+        tcp_send_status("HEIGHT_DOWN");
+    }
+    // H <angle> - Set all shoulders to specific angle
+    else if (cmd_upper[0] == 'H' && cmd_upper[1] == ' ') {
+        int angle = atoi(&cmd_upper[2]);
+        if (angle >= 0 && angle <= 180) {
+            printf("[CMD] Setting all shoulders to %d°\n", angle);
+            xSemaphoreGive(state_mutex);
+            for (int i = 0; i < 4; i++) {
+                set_servo_safe(SHOULDER_CHANNELS[i], (float)angle);
+            }
+            xSemaphoreTake(state_mutex, portMAX_DELAY);
+            char lcd_buf[17];
+            snprintf(lcd_buf, sizeof(lcd_buf), "All: %d deg", angle);
+            update_lcd_status_safe("Height Set", lcd_buf);
+            tcp_send_status("HEIGHT_SET");
+        }
+    }
+    // H+ - Raise all shoulders by 10 degrees
+    else if (strcmp(cmd_upper, "H+") == 0) {
+        printf("[CMD] Raising all shoulders +10°\n");
+        xSemaphoreGive(state_mutex);
+        // Move away from center (FR/RL decrease, FL/RR increase)
+        set_servo_safe(SHOULDER_CHANNELS[0], last_servo_angles[SHOULDER_CHANNELS[0]] - 10);
+        set_servo_safe(SHOULDER_CHANNELS[1], last_servo_angles[SHOULDER_CHANNELS[1]] + 10);
+        set_servo_safe(SHOULDER_CHANNELS[2], last_servo_angles[SHOULDER_CHANNELS[2]] + 10);
+        set_servo_safe(SHOULDER_CHANNELS[3], last_servo_angles[SHOULDER_CHANNELS[3]] - 10);
+        xSemaphoreTake(state_mutex, portMAX_DELAY);
+        update_lcd_status_safe("Height Up", "+10 degrees");
+        tcp_send_status("HEIGHT_UP");
+    }
+    // H- - Lower all shoulders by 10 degrees
+    else if (strcmp(cmd_upper, "H-") == 0) {
+        printf("[CMD] Lowering all shoulders -10°\n");
+        xSemaphoreGive(state_mutex);
+        // Move towards center (FR/RL increase, FL/RR decrease)
+        set_servo_safe(SHOULDER_CHANNELS[0], last_servo_angles[SHOULDER_CHANNELS[0]] + 10);
+        set_servo_safe(SHOULDER_CHANNELS[1], last_servo_angles[SHOULDER_CHANNELS[1]] - 10);
+        set_servo_safe(SHOULDER_CHANNELS[2], last_servo_angles[SHOULDER_CHANNELS[2]] - 10);
+        set_servo_safe(SHOULDER_CHANNELS[3], last_servo_angles[SHOULDER_CHANNELS[3]] + 10);
+        xSemaphoreTake(state_mutex, portMAX_DELAY);
+        update_lcd_status_safe("Height Down", "-10 degrees");
+        tcp_send_status("HEIGHT_DOWN");
+    }
+    // FR <angle> - Move Front Right shoulder to angle
+    else if (strncmp(cmd_upper, "FR ", 3) == 0) {
+        int angle = atoi(&cmd_upper[3]);
+        if (angle >= 0 && angle <= 180) {
+            printf("[CMD] FR Shoulder -> %d°\n", angle);
+            xSemaphoreGive(state_mutex);
+            set_servo_safe(SHOULDER_CHANNELS[0], (float)angle);
+            xSemaphoreTake(state_mutex, portMAX_DELAY);
+            update_lcd_status_safe("FR Shoulder", "Adjusted");
+            tcp_send_status("FR_ADJUSTED");
+        }
+    }
+    // FL <angle> - Move Front Left shoulder to angle
+    else if (strncmp(cmd_upper, "FL ", 3) == 0) {
+        int angle = atoi(&cmd_upper[3]);
+        if (angle >= 0 && angle <= 180) {
+            printf("[CMD] FL Shoulder -> %d°\n", angle);
+            xSemaphoreGive(state_mutex);
+            set_servo_safe(SHOULDER_CHANNELS[1], (float)angle);
+            xSemaphoreTake(state_mutex, portMAX_DELAY);
+            update_lcd_status_safe("FL Shoulder", "Adjusted");
+            tcp_send_status("FL_ADJUSTED");
+        }
+    }
+    // RR <angle> - Move Rear Right shoulder to angle
+    else if (strncmp(cmd_upper, "RR ", 3) == 0) {
+        int angle = atoi(&cmd_upper[3]);
+        if (angle >= 0 && angle <= 180) {
+            printf("[CMD] RR Shoulder -> %d°\n", angle);
+            xSemaphoreGive(state_mutex);
+            set_servo_safe(SHOULDER_CHANNELS[2], (float)angle);
+            xSemaphoreTake(state_mutex, portMAX_DELAY);
+            update_lcd_status_safe("RR Shoulder", "Adjusted");
+            tcp_send_status("RR_ADJUSTED");
+        }
+    }
+    // RL <angle> - Move Rear Left shoulder to angle
+    else if (strncmp(cmd_upper, "RL ", 3) == 0) {
+        int angle = atoi(&cmd_upper[3]);
+        if (angle >= 0 && angle <= 180) {
+            printf("[CMD] RL Shoulder -> %d°\n", angle);
+            xSemaphoreGive(state_mutex);
+            set_servo_safe(SHOULDER_CHANNELS[3], (float)angle);
+            xSemaphoreTake(state_mutex, portMAX_DELAY);
+            update_lcd_status_safe("RL Shoulder", "Adjusted");
+            tcp_send_status("RL_ADJUSTED");
+        }
+    }
+    // INIT - Initialize to calibrated neutral positions
+    else if (strcmp(cmd_upper, "INIT") == 0 || strcmp(cmd_upper, "I") == 0) {
+        current_state = STATE_IDLE;
+        xSemaphoreGive(state_mutex);
+        stand_neutral();
+        xSemaphoreTake(state_mutex, portMAX_DELAY);
+        printf("[CMD] Initialized to calibrated positions\n");
+        update_lcd_status_safe("Init Pose", "Calibrated");
+        tcp_send_status("INITIALIZED");
+    }
+    // LOAD - Load settings from flash
+    else if (strcmp(cmd_upper, "LOAD") == 0) {
+        xSemaphoreGive(state_mutex);
+        if (load_settings_from_flash()) {
+            update_lcd_status_safe("Settings", "Loaded!");
+            tcp_send_status("SETTINGS_LOADED");
+        } else {
+            update_lcd_status_safe("No saved", "settings");
+            tcp_send_status("NO_SAVED_SETTINGS");
+        }
+        xSemaphoreTake(state_mutex, portMAX_DELAY);
     }
     // Tail Wag Commands
     else if (strcmp(cmd_upper, "TAIL_WAG") == 0 || strcmp(cmd_upper, "WAG") == 0) {
@@ -1034,6 +1362,49 @@ void process_command(const char* cmd) {
         printf("[CMD] Tail stopped\n");
         update_lcd_status_safe("Tail", "Stopped");
     }
+    // TAIL_WAG_X - Wag tail X times (e.g., TAIL_WAG_5)
+    else if (strncmp(cmd_upper, "TAIL_WAG_", 9) == 0) {
+        int wags = atoi(&cmd_upper[9]);
+        if (wags > 0 && wags <= 20) {
+            printf("[CMD] Tail wagging %d times!\n", wags);
+            char lcd_buf[17];
+            snprintf(lcd_buf, sizeof(lcd_buf), "Wag x%d", wags);
+            update_lcd_status_safe("Tail", lcd_buf);
+            xSemaphoreGive(state_mutex);
+            for (int i = 0; i < wags; i++) {
+                gpio_put(MOTOR_IN1_PIN, 1);
+                gpio_put(MOTOR_IN2_PIN, 0);
+                sleep_ms(200);
+                gpio_put(MOTOR_IN1_PIN, 0);
+                gpio_put(MOTOR_IN2_PIN, 1);
+                sleep_ms(200);
+            }
+            gpio_put(MOTOR_IN1_PIN, 0);
+            gpio_put(MOTOR_IN2_PIN, 0);
+            xSemaphoreTake(state_mutex, portMAX_DELAY);
+            tcp_send_status("TAIL_STOPPED");
+        } else {
+            printf("[ERROR] Invalid wag count. Use 1-20.\n");
+        }
+    }
+    // T - Quick tail wag (single key)
+    else if (strcmp(cmd_upper, "T") == 0) {
+        printf("[CMD] Tail quick wag!\n");
+        update_lcd_status_safe("Tail", "Wagging!");
+        xSemaphoreGive(state_mutex);
+        for (int i = 0; i < 3; i++) {
+            gpio_put(MOTOR_IN1_PIN, 1);
+            gpio_put(MOTOR_IN2_PIN, 0);
+            sleep_ms(200);
+            gpio_put(MOTOR_IN1_PIN, 0);
+            gpio_put(MOTOR_IN2_PIN, 1);
+            sleep_ms(200);
+        }
+        gpio_put(MOTOR_IN1_PIN, 0);
+        gpio_put(MOTOR_IN2_PIN, 0);
+        xSemaphoreTake(state_mutex, portMAX_DELAY);
+        tcp_send_status("TAIL_STOPPED");
+    }
     // Status
     else if (strcmp(cmd_upper, "STATUS") == 0) {
         printf("\n=== System Status ===\n");
@@ -1047,13 +1418,102 @@ void process_command(const char* cmd) {
         printf("Obstacle Override: %s\n", obstacle_override ? "Active" : "Inactive");
     }
     else if (strcmp(cmd_upper, "HELP") == 0 || strcmp(cmd_upper, "?") == 0) {
-        printf("\n=== Available Commands ===\n");
-        printf("Movement: WALK/W, BACK/B, STOP/S, LEFT/A, RIGHT/D, ESTOP, NEUTRAL/N\n");
-        printf("Head:     HEAD_ON, HEAD_OFF, HEAD_LEFT, HEAD_RIGHT, HEAD_CENTER, SCAN\n");
-        printf("Tail:     TAIL_WAG/WAG, TAIL_LEFT, TAIL_RIGHT, TAIL_STOP\n");
-        printf("Sensors:  SENSORS, IMU, GPS, IR, PIR, LDR/LIGHT\n");
-        printf("Calibration: SET_HOME, GET_CAL, SAVE, CAL_IMU, RESET_IMU\n");
-        printf("System:   STATUS, HELP\n");
+        printf("\n");
+        printf("╔═══════════════════════════════════════════════════╗\n");
+        printf("║   SpotMicro FreeRTOS Commands (Full List)         ║\n");
+        printf("╚═══════════════════════════════════════════════════╝\n");
+        printf("\n");
+        printf("QUICK KEYS (single character, no Enter needed):\n");
+        printf("  W               Walk forward (IK gait)\n");
+        printf("  B               Walk backward (IK gait)\n");
+        printf("  A / L           Turn left 15°\n");
+        printf("  D / R           Turn right 15°\n");
+        printf("  S               STOP walking/turning\n");
+        printf("  N               Neutral pose (calibrated)\n");
+        printf("  T               Tail wag (3 times)\n");
+        printf("  U               Height UP (raise by 5°)\n");
+        printf("  I               Init pose (calibrated)\n");
+        printf("  ?               Show this help\n");
+        printf("\n");
+        printf("MOVEMENT COMMANDS:\n");
+        printf("  WALK / FORWARD / START Start walking forward\n");
+        printf("  BACK / BACKWARD        Walk backward\n");
+        printf("  STOP                   Stop all movement\n");
+        printf("  LEFT / TURN_LEFT       Turn left 15°\n");
+        printf("  RIGHT / TURN_RIGHT     Turn right 15°\n");
+        printf("  TURN_LEFT_X            Turn left X degrees (e.g., TURN_LEFT_30)\n");
+        printf("  TURN_RIGHT_X           Turn right X degrees (e.g., TURN_RIGHT_45)\n");
+        printf("  NEUTRAL / STAND        Return to neutral stance\n");
+        printf("  ESTOP / EMERGENCY      Emergency stop!\n");
+        printf("\n");
+        printf("HEIGHT CONTROL:\n");
+        printf("  H <angle>              Set all shoulders (0-180)\n");
+        printf("  H+ / H-                Raise/Lower all by 10°\n");
+        printf("  UP / DOWN              Raise/Lower by 5°\n");
+        printf("  LOW / CROUCH           Crouch pose\n");
+        printf("  HIGH / EXTEND          Extended pose\n");
+        printf("\n");
+        printf("SHOULDER CONTROL (Individual Legs):\n");
+        printf("  FR <angle>             Move Front-Right shoulder\n");
+        printf("  FL <angle>             Move Front-Left shoulder\n");
+        printf("  RR <angle>             Move Rear-Right shoulder\n");
+        printf("  RL <angle>             Move Rear-Left shoulder\n");
+        printf("\n");
+        printf("HEAD SERVO (13th Servo, CH12) COMMANDS:\n");
+        printf("  HEAD_ON / SCAN         Enable head swing (scanning)\n");
+        printf("  HEAD_OFF               Disable swing, center head\n");
+        printf("  HEAD_STOP              Stop head at current position\n");
+        printf("  HEAD_ACTIVATE          Activate head swing mode\n");
+        printf("  HEAD_LEFT              Look left (45°)\n");
+        printf("  HEAD_RIGHT             Look right (135°)\n");
+        printf("  HEAD_CENTER            Center head (90°)\n");
+        printf("  HEAD_ANGLE_X           Set head to X° (45-135)\n");
+        printf("\n");
+        printf("TAIL (DC MOTOR) COMMANDS:\n");
+        printf("  TAIL_WAG / WAG / T     Wag tail 3 times\n");
+        printf("  TAIL_WAG_X             Wag tail X times (e.g., TAIL_WAG_5)\n");
+        printf("  TAIL_LEFT              Move tail left\n");
+        printf("  TAIL_RIGHT             Move tail right\n");
+        printf("  TAIL_STOP              Stop tail motor\n");
+        printf("\n");
+        printf("SENSOR COMMANDS (All data from Ultrasonics + Nano):\n");
+        printf("  SENSORS / SENSOR       Show ALL sensor data (detailed)\n");
+        printf("  US / ULTRASONIC        Show ultrasonic sensors (left/right)\n");
+        printf("  IMU                    Show IMU data (roll/pitch/yaw/accel)\n");
+        printf("  GPS                    Show GPS data (lat/lon/alt/sats)\n");
+        printf("  IR                     Show IR obstacle sensors (front/back)\n");
+        printf("  PIR                    Show PIR motion sensors (front/back)\n");
+        printf("  LDR / LIGHT            Show LDR light sensor\n");
+        printf("\n");
+        printf("CALIBRATION COMMANDS:\n");
+        printf("  SET_HOME               Set current position as neutral\n");
+        printf("  GET_CAL / CALIBRATION  Show current calibration values\n");
+        printf("  SAVE                   Save calibration to flash\n");
+        printf("  LOAD                   Load saved calibration\n");
+        printf("  CAL_IMU                Calibrate IMU (keep robot still!)\n");
+        printf("  RESET_IMU              Reset IMU orientation\n");
+        printf("  SH_XX <angle>          Calibrate shoulder (SH_FR, SH_FL, SH_RR, SH_RL)\n");
+        printf("  EL_XX <angle>          Calibrate elbow (EL_FR, EL_FL, EL_RR, EL_RL)\n");
+        printf("  WR_XX <angle>          Calibrate wrist (WR_FR, WR_FL, WR_RR, WR_RL)\n");
+        printf("  CAL_<LEG>_<S>_<E>_<W>  Set full leg calibration\n");
+        printf("                         (e.g., CAL_FR_60_90_50)\n");
+        printf("\n");
+        printf("DIRECT SERVO CONTROL:\n");
+        printf("  SERVO_<CH>_<ANGLE>     Set servo channel to angle\n");
+        printf("                         (e.g., SERVO_0_90, SERVO_12_90)\n");
+        printf("\n");
+        printf("SYSTEM COMMANDS:\n");
+        printf("  STATUS                 Show system status\n");
+        printf("  INIT                   Initialize to neutral pose\n");
+        printf("  HELP / ?               Show this help menu\n");
+        printf("\n");
+        printf("═══════════════════════════════════════════════════════════\n");
+        printf("Sensor Sources:\n");
+        printf("  - Ultrasonic: Left (GP6/7), Right (GP8/9) on Pico\n");
+        printf("  - IMU, GPS, IR, PIR, LDR via Nano RP2040 (UART)\n");
+        printf("Web Interface: Connect to Pico's IP on port 8080\n");
+        printf("═══════════════════════════════════════════════════════════\n");
+        printf("\n");
     }
     // Calibration: Set home position for all servos (current position becomes neutral)
     else if (strcmp(cmd_upper, "SET_HOME") == 0) {
@@ -1076,6 +1536,135 @@ void process_command(const char* cmd) {
         printf("Shoulders: [%d, %d, %d, %d]\n", calibrated_shoulder[0], calibrated_shoulder[1], calibrated_shoulder[2], calibrated_shoulder[3]);
         printf("Elbows: [%d, %d, %d, %d]\n", calibrated_elbow[0], calibrated_elbow[1], calibrated_elbow[2], calibrated_elbow[3]);
         printf("Wrists: [%d, %d, %d, %d]\n", calibrated_wrist[0], calibrated_wrist[1], calibrated_wrist[2], calibrated_wrist[3]);
+    }
+    // =========================================================================
+    // SHOULDER CALIBRATION: SH_FR, SH_FL, SH_RR, SH_RL <angle>
+    // =========================================================================
+    else if (strncmp(cmd_upper, "SH_FR ", 6) == 0 || strncmp(cmd_upper, "SH_FR_", 6) == 0) {
+        int angle = atoi(&cmd_upper[6]);
+        if (angle >= 0 && angle <= 180) {
+            calibrated_shoulder[0] = angle;
+            set_servo_safe(SHOULDER_CHANNELS[0], (float)angle);
+            printf("[CMD] FR Shoulder calibrated to %d°\n", angle);
+            update_lcd_status_safe("FR Shoulder", "Calibrated");
+            tcp_send_status("SH_FR_CALIBRATED");
+        }
+    }
+    else if (strncmp(cmd_upper, "SH_FL ", 6) == 0 || strncmp(cmd_upper, "SH_FL_", 6) == 0) {
+        int angle = atoi(&cmd_upper[6]);
+        if (angle >= 0 && angle <= 180) {
+            calibrated_shoulder[1] = angle;
+            set_servo_safe(SHOULDER_CHANNELS[1], (float)angle);
+            printf("[CMD] FL Shoulder calibrated to %d°\n", angle);
+            update_lcd_status_safe("FL Shoulder", "Calibrated");
+            tcp_send_status("SH_FL_CALIBRATED");
+        }
+    }
+    else if (strncmp(cmd_upper, "SH_RR ", 6) == 0 || strncmp(cmd_upper, "SH_RR_", 6) == 0) {
+        int angle = atoi(&cmd_upper[6]);
+        if (angle >= 0 && angle <= 180) {
+            calibrated_shoulder[2] = angle;
+            set_servo_safe(SHOULDER_CHANNELS[2], (float)angle);
+            printf("[CMD] RR Shoulder calibrated to %d°\n", angle);
+            update_lcd_status_safe("RR Shoulder", "Calibrated");
+            tcp_send_status("SH_RR_CALIBRATED");
+        }
+    }
+    else if (strncmp(cmd_upper, "SH_RL ", 6) == 0 || strncmp(cmd_upper, "SH_RL_", 6) == 0) {
+        int angle = atoi(&cmd_upper[6]);
+        if (angle >= 0 && angle <= 180) {
+            calibrated_shoulder[3] = angle;
+            set_servo_safe(SHOULDER_CHANNELS[3], (float)angle);
+            printf("[CMD] RL Shoulder calibrated to %d°\n", angle);
+            update_lcd_status_safe("RL Shoulder", "Calibrated");
+            tcp_send_status("SH_RL_CALIBRATED");
+        }
+    }
+    // =========================================================================
+    // ELBOW CALIBRATION: EL_FR, EL_FL, EL_RR, EL_RL <angle>
+    // =========================================================================
+    else if (strncmp(cmd_upper, "EL_FR ", 6) == 0 || strncmp(cmd_upper, "EL_FR_", 6) == 0) {
+        int angle = atoi(&cmd_upper[6]);
+        if (angle >= 0 && angle <= 180) {
+            calibrated_elbow[0] = angle;
+            set_servo_safe(ELBOW_CHANNELS[0], (float)angle);
+            printf("[CMD] FR Elbow calibrated to %d°\n", angle);
+            update_lcd_status_safe("FR Elbow", "Calibrated");
+            tcp_send_status("EL_FR_CALIBRATED");
+        }
+    }
+    else if (strncmp(cmd_upper, "EL_FL ", 6) == 0 || strncmp(cmd_upper, "EL_FL_", 6) == 0) {
+        int angle = atoi(&cmd_upper[6]);
+        if (angle >= 0 && angle <= 180) {
+            calibrated_elbow[1] = angle;
+            set_servo_safe(ELBOW_CHANNELS[1], (float)angle);
+            printf("[CMD] FL Elbow calibrated to %d°\n", angle);
+            update_lcd_status_safe("FL Elbow", "Calibrated");
+            tcp_send_status("EL_FL_CALIBRATED");
+        }
+    }
+    else if (strncmp(cmd_upper, "EL_RR ", 6) == 0 || strncmp(cmd_upper, "EL_RR_", 6) == 0) {
+        int angle = atoi(&cmd_upper[6]);
+        if (angle >= 0 && angle <= 180) {
+            calibrated_elbow[2] = angle;
+            set_servo_safe(ELBOW_CHANNELS[2], (float)angle);
+            printf("[CMD] RR Elbow calibrated to %d°\n", angle);
+            update_lcd_status_safe("RR Elbow", "Calibrated");
+            tcp_send_status("EL_RR_CALIBRATED");
+        }
+    }
+    else if (strncmp(cmd_upper, "EL_RL ", 6) == 0 || strncmp(cmd_upper, "EL_RL_", 6) == 0) {
+        int angle = atoi(&cmd_upper[6]);
+        if (angle >= 0 && angle <= 180) {
+            calibrated_elbow[3] = angle;
+            set_servo_safe(ELBOW_CHANNELS[3], (float)angle);
+            printf("[CMD] RL Elbow calibrated to %d°\n", angle);
+            update_lcd_status_safe("RL Elbow", "Calibrated");
+            tcp_send_status("EL_RL_CALIBRATED");
+        }
+    }
+    // =========================================================================
+    // WRIST CALIBRATION: WR_FR, WR_FL, WR_RR, WR_RL <angle>
+    // =========================================================================
+    else if (strncmp(cmd_upper, "WR_FR ", 6) == 0 || strncmp(cmd_upper, "WR_FR_", 6) == 0) {
+        int angle = atoi(&cmd_upper[6]);
+        if (angle >= 0 && angle <= 180) {
+            calibrated_wrist[0] = angle;
+            set_servo_safe(WRIST_CHANNELS[0], (float)angle);
+            printf("[CMD] FR Wrist calibrated to %d°\n", angle);
+            update_lcd_status_safe("FR Wrist", "Calibrated");
+            tcp_send_status("WR_FR_CALIBRATED");
+        }
+    }
+    else if (strncmp(cmd_upper, "WR_FL ", 6) == 0 || strncmp(cmd_upper, "WR_FL_", 6) == 0) {
+        int angle = atoi(&cmd_upper[6]);
+        if (angle >= 0 && angle <= 180) {
+            calibrated_wrist[1] = angle;
+            set_servo_safe(WRIST_CHANNELS[1], (float)angle);
+            printf("[CMD] FL Wrist calibrated to %d°\n", angle);
+            update_lcd_status_safe("FL Wrist", "Calibrated");
+            tcp_send_status("WR_FL_CALIBRATED");
+        }
+    }
+    else if (strncmp(cmd_upper, "WR_RR ", 6) == 0 || strncmp(cmd_upper, "WR_RR_", 6) == 0) {
+        int angle = atoi(&cmd_upper[6]);
+        if (angle >= 0 && angle <= 180) {
+            calibrated_wrist[2] = angle;
+            set_servo_safe(WRIST_CHANNELS[2], (float)angle);
+            printf("[CMD] RR Wrist calibrated to %d°\n", angle);
+            update_lcd_status_safe("RR Wrist", "Calibrated");
+            tcp_send_status("WR_RR_CALIBRATED");
+        }
+    }
+    else if (strncmp(cmd_upper, "WR_RL ", 6) == 0 || strncmp(cmd_upper, "WR_RL_", 6) == 0) {
+        int angle = atoi(&cmd_upper[6]);
+        if (angle >= 0 && angle <= 180) {
+            calibrated_wrist[3] = angle;
+            set_servo_safe(WRIST_CHANNELS[3], (float)angle);
+            printf("[CMD] RL Wrist calibrated to %d°\n", angle);
+            update_lcd_status_safe("RL Wrist", "Calibrated");
+            tcp_send_status("WR_RL_CALIBRATED");
+        }
     }
     // Direct servo angle control: SERVO_<channel>_<angle>
     else if (strncmp(cmd_upper, "SERVO_", 6) == 0) {
