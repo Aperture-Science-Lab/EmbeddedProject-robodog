@@ -50,7 +50,7 @@
 //   WIFI_SSID "DESKTOP-ABC123"
 //   WIFI_PASSWORD "mypassword123"
 //
-#define WIFI_SSID       "CHANGE_ME"           // <-- PUT YOUR HOTSPOT NAME HERE
-#define WIFI_PASSWORD   "CHANGE_ME"           // <-- PUT YOUR HOTSPOT PASSWORD HERE
+#define WIFI_SSID       "---"           // <-- PUT YOUR HOTSPOT NAME HERE
+#define WIFI_PASSWORD   "---"           // <-- PUT YOUR HOTSPOT PASSWORD HERE
 
 #endif // WIFI_CONFIG_H

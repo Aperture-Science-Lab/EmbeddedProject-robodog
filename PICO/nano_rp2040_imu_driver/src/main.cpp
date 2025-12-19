@@ -181,7 +181,7 @@ void setup() {
         gps_initialized = true;
         Serial.println("OK! (Searching for satellites...)");
     #else
-        Serial.println("⚠️  GPS DISABLED for testing - Set GPS_MODULE_CONNECTED=true when ready");
+        Serial.println("⚠  GPS DISABLED for testing - Set GPS_MODULE_CONNECTED=true when ready");
         Serial.println("   All other sensors will work normally");
         gps_initialized = false;
     #endif

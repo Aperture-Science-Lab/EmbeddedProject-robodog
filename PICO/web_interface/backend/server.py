@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Body
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import serial
@@ -515,6 +516,18 @@ def gen_frames(src, is_stereo_feed=False):
         time.sleep(0.05)
 
 # ================= API Endpoints =================
+
+class VoiceCommand(BaseModel):
+    cmd: str
+    text: str = ""
+
+@app.post("/api/voice-command")
+def voice_command_endpoint(data: VoiceCommand):
+    """Receive voice command and execute it"""
+    print(f"[VOICE] Received: {data.cmd} ('{data.text}')")
+    primitive = process_high_level_command(data.cmd)
+    return {"status": "executed", "primitive": primitive}
+
 
 @app.get("/api/status")
 def get_status():

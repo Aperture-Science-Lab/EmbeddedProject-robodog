@@ -231,7 +231,7 @@ function App() {
             <h2><IconCamera /> Cameras</h2>
             <div className="camera-feeds">
               <div className={`feed-box ${camErrorL?'error':''}`}>
-                {!camErrorL ? <img src={`${API_URL}/video_feed_left`} onError={()=>setCamErrorL(true)} alt="L"/> : <NoSignalAnimation/>}
+                {!camErrorL ? <img class="scaleY(-1)" src={`${API_URL}/video_feed_left`} onError={()=>setCamErrorL(true)} alt="L"/> : <NoSignalAnimation/>}
                 <div className="feed-label">LEFT</div>
               </div>
               <div className={`feed-box ${camErrorR?'error':''}`}>
