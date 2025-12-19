@@ -98,3 +98,39 @@ The robot uses a split-power rail system powered by a 12V 7000mAh Li-ion battery
     [12V Battery] --+-- [XL4016] --> 6V --> [PCA9685 V+] --> Servos
                     |
                     +-- [LM2596S] --> 5V --> [Pico W / Nano / Sensors]
+```
+## Software Dependencies & References
+
+### Core Libraries
+* **OS Kernel:** [FreeRTOS Kernel](https://github.com/FreeRTOS/FreeRTOS-Kernel)
+* **Main Kinematics:** [SpotMicroAI Kinematics](https://spotmicroai.readthedocs.io/en/latest/kinematic/)
+* **State Estimation:** [ES-EKF (Self-Driving Car)](https://github.com/Aperture-Science-Lab/Self-Driving-Car)
+* **Microcontroller Code:** [SpotMicroESP32 Port](https://github.com/michaelkubina/SpotMicroESP32)
+
+### AI & Vision Modules
+* **Speech Recognition:** [OpenAI Whisper](https://github.com/openai/whisper)
+* **Stereo Vision:** [ESP32 Stereo Camera](https://github.com/jonathanrandall/esp32_stereo_camera)
+* **Secondary Kinematics Reference:** [OpenQuadruped](https://github.com/OpenQuadruped/spot_mini_mini)
+
+---
+
+## Setup and Installation
+
+### Prerequisites
+* VS Code with CMake and GCC-ARM-Embedded Toolchain.
+* Raspberry Pi Pico SDK.
+
+### Configuration
+1.  Open `src/wifi_config.h`.
+2.  Update the following definitions:
+    * `WIFI_SSID`
+    * `WIFI_PASSWORD`
+    * `MQTT_BROKER_IP`
+
+### Build Instructions
+
+```bash
+mkdir build
+cd build
+cmake ..
+make -j4
