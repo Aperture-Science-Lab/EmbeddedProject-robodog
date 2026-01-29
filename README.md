@@ -8,6 +8,13 @@ This project implements a SpotMicro quadruped robot using a distributed microcon
 * **Base Chassis Model:** [SpotMicro V4 (Creality Cloud)](https://www.crealitycloud.com/model-detail/spotmicro-robotic-dog-v4)
 * **Project Documentation:** [SpotMicroAI ReadTheDocs](https://spotmicroai.readthedocs.io/en/latest/)
 
+## Images 
+
+<img width="1200" height="1600" alt="image" src="https://github.com/user-attachments/assets/e841e29e-03c6-4b43-80ba-6acefc23f229" />
+
+![HOTDOG POSTER (1)_page-0001](https://github.com/user-attachments/assets/1d6a00b8-57cf-4ba9-90d4-295538a676a7)
+
+
 ## System Architecture
 
 The system is divided into three parallel subsystems controlled via FreeRTOS on the main controller.
